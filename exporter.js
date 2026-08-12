@@ -38,17 +38,14 @@ function contentBlocksToText(blocks, images, format) {
     }
 
     if (block.type === 'tool_use') {
-      const toolName = block.name || 'tool';
-      const input = block.input ? JSON.stringify(block.input, null, 2) : '';
-      parts.push(`[tool: ${toolName}]\n\`\`\`\n${input}\n\`\`\``);
+      const desc = block.input && block.input.description
+        ? block.input.description
+        : (block.name || 'tool');
+      parts.push(`[${desc}]`);
       continue;
     }
 
     if (block.type === 'tool_result') {
-      const content = Array.isArray(block.content)
-        ? block.content.map(c => c.text || '').join('\n')
-        : (block.content || '');
-      parts.push(`[tool_result]\n\`\`\`\n${content}\n\`\`\``);
       continue;
     }
 

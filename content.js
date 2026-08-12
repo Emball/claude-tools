@@ -1,4 +1,4 @@
-// content.js — injects export controls into claude.ai /chats page
+// content.js — injects export button into claude.ai /chats selection bar
 
 const ICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>`;
 
@@ -28,44 +28,34 @@ function extractConvIdFromUrl(url) {
   return m ? m[1] : null;
 }
 
-// ── Collect selected conversation IDs from the chats page ────────────────────
+// ── Find the Cancel button using span text content ───────────────────────────
+
+function findCancelButton() {
+  return Array.from(document.querySelectorAll('button[data-cds="Button"]')).find(btn => {
+    const span = btn.querySelector('span.inline-flex');
+    return span && span.textContent.trim() === 'Cancel';
+  });
+}
+
+// ── Collect selected conversation IDs ────────────────────────────────────────
 
 function getSelectedConvIds() {
-  // Selected rows have a checked checkbox; each row links to /chat/{uuid}
   const ids = [];
 
-  // Strategy 1: checked checkboxes inside list rows
+  // Selected rows have a checkbox input that is checked
   document.querySelectorAll('input[type="checkbox"]:checked').forEach(cb => {
-    const row = cb.closest('[href*="/chat/"]') || cb.closest('li,div[role="row"],tr');
-    if (!row) return;
-    const anchor = row.querySelector('a[href*="/chat/"]') || row.closest('a[href*="/chat/"]');
-    if (anchor) {
-      const id = extractConvIdFromUrl(anchor.href);
-      if (id && !ids.includes(id)) ids.push(id);
-    }
-  });
-
-  // Strategy 2: rows with aria-selected="true"
-  if (ids.length === 0) {
-    document.querySelectorAll('[aria-selected="true"]').forEach(row => {
-      const anchor = row.querySelector('a[href*="/chat/"]') || row.closest('a[href*="/chat/"]');
+    // Walk up to find the row, then find its anchor
+    let el = cb.parentElement;
+    while (el && el !== document.body) {
+      const anchor = el.querySelector('a[href*="/chat/"]');
       if (anchor) {
         const id = extractConvIdFromUrl(anchor.href);
         if (id && !ids.includes(id)) ids.push(id);
+        break;
       }
-    });
-  }
-
-  // Strategy 3: any selected/active state class on rows
-  if (ids.length === 0) {
-    document.querySelectorAll('a[href*="/chat/"]').forEach(anchor => {
-      const row = anchor.closest('li,div[role="row"],tr,[class*="selected"],[class*="checked"]');
-      if (row && (row.getAttribute('aria-selected') === 'true' || row.classList.toString().match(/selected|checked/i))) {
-        const id = extractConvIdFromUrl(anchor.href);
-        if (id && !ids.includes(id)) ids.push(id);
-      }
-    });
-  }
+      el = el.parentElement;
+    }
+  });
 
   console.log('[cce] selected conv ids:', ids);
   return ids;
@@ -80,6 +70,13 @@ async function exportSelected() {
     return;
   }
   console.log(`[cce] exporting ${ids.length} selected chats`);
+
+  const btn = document.querySelector('[data-cce="sel-export"]');
+  if (btn) {
+    btn.style.opacity = '0.5';
+    btn.style.pointerEvents = 'none';
+  }
+
   try {
     const format = await getFormat();
     const orgId = await getOrgId();
@@ -87,53 +84,48 @@ async function exportSelected() {
     await exportBulk(res.results, format);
   } catch (err) {
     console.error('[cce] exportSelected failed:', err.message);
+  } finally {
+    if (btn) {
+      btn.style.opacity = '1';
+      btn.style.pointerEvents = '';
+    }
   }
 }
 
-// ── Inject download button into the selection action bar ─────────────────────
+// ── Inject download button into the selection header ─────────────────────────
 
 function injectSelectionBarButton() {
   if (document.querySelector('[data-cce="sel-export"]')) return;
 
-  // The action bar appears when items are selected; it contains buttons like
-  // "Select all", "Move to project", "Delete", "Cancel"
-  const cancelBtn = Array.from(document.querySelectorAll('button')).find(
-    b => b.textContent.trim() === 'Cancel'
-  );
+  const cancelBtn = findCancelButton();
   if (!cancelBtn) return;
 
-  const bar = cancelBtn.closest('div,nav,section,header,[role="toolbar"]');
-  if (!bar) return;
+  // The cancel button's parent div holds all the action buttons
+  const buttonRow = cancelBtn.parentElement;
+  if (!buttonRow) return;
 
   const btn = document.createElement('button');
-  btn.innerHTML = ICON_SVG;
   btn.setAttribute('data-cce', 'sel-export');
   btn.setAttribute('title', 'Export selected chats');
-  btn.style.cssText = [
-    'display:inline-flex',
-    'align-items:center',
-    'justify-content:center',
-    'gap:6px',
-    'padding:6px 12px',
-    'border:none',
-    'border-radius:6px',
-    'background:transparent',
-    'color:var(--text-300,#8b8b8b)',
-    'cursor:pointer',
-    'font-size:13px',
-    'transition:color 0.15s',
-  ].join(';');
+  // Match the same data-cds attribute so it inherits Claude's button base styles
+  btn.setAttribute('data-cds', 'Button');
+  btn.innerHTML = `<span class="inline-flex min-w-0 items-center gap-1">${ICON_SVG}<span>Export</span></span>`;
 
-  btn.addEventListener('mouseenter', () => { btn.style.color = 'var(--text-100,#e8e8e8)'; });
-  btn.addEventListener('mouseleave', () => { btn.style.color = 'var(--text-300,#8b8b8b)'; });
-  btn.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); exportSelected(); });
+  // Copy classes from Cancel button so it blends in perfectly
+  btn.className = cancelBtn.className;
 
-  // Insert before Cancel so it sits naturally in the bar
-  cancelBtn.parentElement.insertBefore(btn, cancelBtn);
+  btn.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    exportSelected();
+  });
+
+  // Insert before Cancel
+  buttonRow.insertBefore(btn, cancelBtn);
   console.log('[cce] selection bar export button injected');
 }
 
-// ── JSZip + exporter loader ──────────────────────────────────────────────────
+// ── Script loader ────────────────────────────────────────────────────────────
 
 function loadScript(url) {
   return new Promise((resolve, reject) => {
@@ -160,10 +152,8 @@ let injectTimer = null;
 function scheduleInject() {
   clearTimeout(injectTimer);
   injectTimer = setTimeout(() => {
-    if (location.pathname === '/chats' || location.pathname.startsWith('/chats')) {
-      injectSelectionBarButton();
-    }
-  }, 300);
+    injectSelectionBarButton();
+  }, 200);
 }
 
 async function init() {
@@ -176,7 +166,6 @@ async function init() {
   }
 
   scheduleInject();
-
   const observer = new MutationObserver(scheduleInject);
   observer.observe(document.body, { childList: true, subtree: true });
 }

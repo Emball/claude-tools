@@ -30,13 +30,17 @@ function contentBlocksToText(blocks, images, format) {
   const parts = [];
 
   for (const block of blocks) {
+
+    // Skip internal/extended thinking
     if (block.type === 'thinking') continue;
 
+    // Plain text block
     if (block.type === 'text') {
       parts.push(block.text || '');
       continue;
     }
 
+    // Tool use — show action label
     if (block.type === 'tool_use') {
       const desc = block.input && block.input.description
         ? block.input.description
@@ -45,20 +49,26 @@ function contentBlocksToText(blocks, images, format) {
       continue;
     }
 
+    // Tool results — skip (Claude's internal response data, not chat content)
     if (block.type === 'tool_result') {
       continue;
     }
 
+    // Image block (user-uploaded screenshot or image)
     if (block.type === 'image') {
       if (block.source && block.source.type === 'base64') {
         const ext = (block.source.media_type || 'image/png').split('/')[1] || 'png';
         const fname = `image_${images.length + 1}.${ext}`;
         images.push({ filename: fname, data: block.source.data, mediaType: block.source.media_type });
         parts.push(`![${fname}](./images/${fname})`);
+      } else if (block.source && block.source.url) {
+        // URL-referenced image — just embed the URL
+        parts.push(`![image](${block.source.url})`);
       }
       continue;
     }
 
+    // Artifact block (code/content artifacts Claude generates)
     if (block.type === 'artifact') {
       const fname = block.title || `artifact_${parts.length}`;
       const lang = block.language || '';
@@ -66,6 +76,31 @@ function contentBlocksToText(blocks, images, format) {
       parts.push(`[artifact: ${fname}]\n\`\`\`${lang}\n${content}\n\`\`\``);
       continue;
     }
+
+    // Document block — uploaded files (.txt, .md, .pdf text layer, etc.)
+    // The API returns these as { type: "document", name: "file.md", text: "..." }
+    // or { type: "document", document: { name: "file.md", content: "..." } }
+    if (block.type === 'document') {
+      const name = block.name || (block.document && block.document.name) || 'file';
+      const text = block.text
+        || (block.document && (block.document.text || block.document.content))
+        || '';
+      parts.push(`[${name}: "${text.trim()}"]`);
+      continue;
+    }
+
+    // Pasted content block — long pastes that Claude wraps in a context block
+    // API returns these as { type: "text", context: "...", is_paste: true }
+    // or { type: "text" } with a separate sibling structure — handled below
+    // Some API versions use type: "context" directly
+    if (block.type === 'context') {
+      const content = block.body || block.content || block.text || '';
+      parts.push(`[pasted: "${content.trim()}"]`);
+      continue;
+    }
+
+    // Fallback: unknown block — log it so we know to add handling
+    console.warn('[exporter] unknown block type:', block.type, block);
   }
 
   return parts.join('\n\n');
@@ -76,14 +111,37 @@ function messageToText(msg, images, format) {
   let body = '';
 
   if (Array.isArray(msg.content)) {
-    body = contentBlocksToText(msg.content, images, format);
+    // Check each block: if a text block has is_paste:true or context_uuid, treat as pasted
+    const processedBlocks = msg.content.map(block => {
+      if (block.type === 'text' && (block.is_paste || block.paste_id)) {
+        return { ...block, type: 'context', body: block.text };
+      }
+      return block;
+    });
+    body = contentBlocksToText(processedBlocks, images, format);
   } else if (typeof msg.content === 'string') {
     body = msg.content;
   } else if (msg.text) {
     body = msg.text;
   }
 
-  return `${role}:\n${body.trim()}`;
+  // Also check top-level message fields for attachments
+  // The API sometimes puts file attachments at msg.attachments[]
+  const attachmentParts = [];
+  if (Array.isArray(msg.attachments)) {
+    for (const att of msg.attachments) {
+      const name = att.file_name || att.name || 'file';
+      const content = att.extracted_content || att.text || att.content || '';
+      if (content) {
+        attachmentParts.push(`[${name}: "${content.trim()}"]`);
+      } else {
+        attachmentParts.push(`[${name}: (binary file, content not available)]`);
+      }
+    }
+  }
+
+  const allParts = [body.trim(), ...attachmentParts].filter(Boolean);
+  return `${role}:\n${allParts.join('\n\n')}`;
 }
 
 function conversationToText(conv, format) {
@@ -109,6 +167,7 @@ async function exportSingle(conv, format) {
   const { text, images } = conversationToText(conv, format);
 
   if (images.length === 0) {
+    // Bare file — no ZIP, no subfolder
     const blob = new Blob([text], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -120,6 +179,7 @@ async function exportSingle(conv, format) {
     return;
   }
 
+  // Has images — ZIP but no subfolder: just title.md + images/ at root
   const zip = new JSZip();
   zip.file(`${title}.${ext}`, text);
   images.forEach(img => {
@@ -136,6 +196,12 @@ async function exportSingle(conv, format) {
 }
 
 async function exportBulk(results, format) {
+  // If only one result, route through exportSingle for clean output
+  if (results.length === 1 && results[0].success && results[0].data) {
+    const format_ = format;
+    return exportSingle(results[0].data, format_);
+  }
+
   console.log(`[exporter] bulk export: ${results.length} results`);
   const ext = format === 'txt' ? 'txt' : 'md';
   const zip = new JSZip();

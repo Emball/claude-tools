@@ -1,4 +1,4 @@
-// content.js — injects export button into claude.ai /chats selection bar
+// content.js — injects export buttons into claude.ai
 
 const ICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>`;
 
@@ -28,7 +28,13 @@ function extractConvIdFromUrl(url) {
   return m ? m[1] : null;
 }
 
-// ── Find the Cancel button using span text content ───────────────────────────
+// ── Get current chat UUID from URL (for single-chat button) ──────────────────
+
+function getCurrentChatId() {
+  return extractConvIdFromUrl(window.location.href);
+}
+
+// ── Find the Cancel button (chats page selection bar) ────────────────────────
 
 function findCancelButton() {
   return Array.from(document.querySelectorAll('button[data-cds="Button"]')).find(btn => {
@@ -41,10 +47,7 @@ function findCancelButton() {
 
 function getSelectedConvIds() {
   const ids = [];
-
-  // Selected rows have a checkbox input that is checked
   document.querySelectorAll('input[type="checkbox"]:checked').forEach(cb => {
-    // Walk up to find the row, then find its anchor
     let el = cb.parentElement;
     while (el && el !== document.body) {
       const anchor = el.querySelector('a[href*="/chat/"]');
@@ -56,12 +59,11 @@ function getSelectedConvIds() {
       el = el.parentElement;
     }
   });
-
   console.log('[cce] selected conv ids:', ids);
   return ids;
 }
 
-// ── Export selected chats ────────────────────────────────────────────────────
+// ── Export selected chats (chats page) ───────────────────────────────────────
 
 async function exportSelected() {
   const ids = getSelectedConvIds();
@@ -72,27 +74,46 @@ async function exportSelected() {
   console.log(`[cce] exporting ${ids.length} selected chats`);
 
   const btn = document.querySelector('[data-cce="sel-export"]');
-  if (btn) {
-    btn.style.opacity = '0.5';
-    btn.style.pointerEvents = 'none';
-  }
+  if (btn) { btn.style.opacity = '0.5'; btn.style.pointerEvents = 'none'; }
 
   try {
     const format = await getFormat();
     const orgId = await getOrgId();
     const res = await sendToBackground('selectedExport', { orgId, convIds: ids });
+    // exportBulk routes single results through exportSingle automatically
     await exportBulk(res.results, format);
   } catch (err) {
     console.error('[cce] exportSelected failed:', err.message);
   } finally {
-    if (btn) {
-      btn.style.opacity = '1';
-      btn.style.pointerEvents = '';
-    }
+    if (btn) { btn.style.opacity = '1'; btn.style.pointerEvents = ''; }
   }
 }
 
-// ── Inject download button into the selection header ─────────────────────────
+// ── Export current open chat (single-chat button) ────────────────────────────
+
+async function exportCurrentChat() {
+  const convId = getCurrentChatId();
+  if (!convId) {
+    console.warn('[cce] could not get current chat ID from URL');
+    return;
+  }
+
+  const btn = document.querySelector('[data-cce="chat-export"]');
+  if (btn) { btn.style.opacity = '0.5'; btn.style.pointerEvents = 'none'; }
+
+  try {
+    const format = await getFormat();
+    const orgId = await getOrgId();
+    const res = await sendToBackground('fetchConversation', { orgId, convId });
+    await exportSingle(res.data, format);
+  } catch (err) {
+    console.error('[cce] exportCurrentChat failed:', err.message);
+  } finally {
+    if (btn) { btn.style.opacity = '1'; btn.style.pointerEvents = ''; }
+  }
+}
+
+// ── Inject export button into chats page selection bar ───────────────────────
 
 function injectSelectionBarButton() {
   if (document.querySelector('[data-cce="sel-export"]')) return;
@@ -100,18 +121,14 @@ function injectSelectionBarButton() {
   const cancelBtn = findCancelButton();
   if (!cancelBtn) return;
 
-  // The cancel button's parent div holds all the action buttons
   const buttonRow = cancelBtn.parentElement;
   if (!buttonRow) return;
 
   const btn = document.createElement('button');
   btn.setAttribute('data-cce', 'sel-export');
   btn.setAttribute('title', 'Export selected chats');
-  // Match the same data-cds attribute so it inherits Claude's button base styles
   btn.setAttribute('data-cds', 'Button');
   btn.innerHTML = `<span class="inline-flex min-w-0 items-center gap-1">${ICON_SVG}<span>Export</span></span>`;
-
-  // Copy classes from Cancel button so it blends in perfectly
   btn.className = cancelBtn.className;
 
   btn.addEventListener('click', (e) => {
@@ -120,9 +137,47 @@ function injectSelectionBarButton() {
     exportSelected();
   });
 
-  // Insert before Cancel
   buttonRow.insertBefore(btn, cancelBtn);
   console.log('[cce] selection bar export button injected');
+}
+
+// ── Inject download button into active chat top bar ──────────────────────────
+// Targets the top-right action area where the Save and Share buttons live.
+// Uses Share button as anchor since it's the most stable reference point.
+
+function injectChatTopBarButton() {
+  if (document.querySelector('[data-cce="chat-export"]')) return;
+
+  // Not on a chat page — bail
+  if (!getCurrentChatId()) return;
+
+  // Find the Share button (has "Share" text in a span child)
+  const shareBtn = Array.from(document.querySelectorAll('button')).find(btn => {
+    const text = btn.textContent.trim();
+    return text === 'Share' || text.includes('Share');
+  });
+
+  if (!shareBtn) return;
+
+  const btn = document.createElement('button');
+  btn.setAttribute('data-cce', 'chat-export');
+  btn.setAttribute('title', 'Export this chat');
+
+  // Match Share button's classes so it sits naturally in the same row
+  btn.className = shareBtn.className;
+
+  // Icon only — no text label, keeps it compact like surrounding controls
+  btn.innerHTML = ICON_SVG;
+
+  btn.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    exportCurrentChat();
+  });
+
+  // Insert immediately before the Share button
+  shareBtn.parentElement.insertBefore(btn, shareBtn);
+  console.log('[cce] chat top bar export button injected');
 }
 
 // ── Script loader ────────────────────────────────────────────────────────────
@@ -145,15 +200,16 @@ async function ensureLibs() {
   }
 }
 
-// ── MutationObserver ─────────────────────────────────────────────────────────
+// ── MutationObserver + route-aware injection ─────────────────────────────────
 
 let injectTimer = null;
 
 function scheduleInject() {
   clearTimeout(injectTimer);
   injectTimer = setTimeout(() => {
-    injectSelectionBarButton();
-  }, 200);
+    injectSelectionBarButton();  // chats page selection bar
+    injectChatTopBarButton();    // active chat top bar
+  }, 300);
 }
 
 async function init() {

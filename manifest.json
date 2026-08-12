@@ -6,7 +6,8 @@
   "permissions": [
     "storage",
     "downloads",
-    "webRequest"
+    "webRequest",
+    "scripting"
   ],
   "host_permissions": [
     "https://claude.ai/*"
@@ -36,7 +37,7 @@
   },
   "web_accessible_resources": [
     {
-      "resources": ["exporter.js"],
+      "resources": ["exporter.js", "jszip.min.js"],
       "matches": ["https://claude.ai/*"]
     }
   ]

@@ -1,38 +1,6 @@
-// content.js — injects export controls into claude.ai UI
+// content.js — injects export controls into claude.ai /chats page
 
 const ICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>`;
-
-const BTN_STYLE = [
-  'display:inline-flex',
-  'align-items:center',
-  'justify-content:center',
-  'width:24px',
-  'height:24px',
-  'padding:0',
-  'border:none',
-  'background:transparent',
-  'color:var(--text-300,#8b8b8b)',
-  'cursor:pointer',
-  'border-radius:4px',
-  'opacity:0',
-  'transition:opacity 0.15s,color 0.15s',
-  'flex-shrink:0',
-].join(';');
-
-function makeBtn(title, onclick) {
-  const btn = document.createElement('button');
-  btn.innerHTML = ICON_SVG;
-  btn.setAttribute('style', BTN_STYLE);
-  btn.setAttribute('title', title);
-  btn.setAttribute('data-cce', '1');
-  btn.addEventListener('mouseenter', () => { btn.style.color = 'var(--text-100,#e8e8e8)'; });
-  btn.addEventListener('mouseleave', () => { btn.style.color = 'var(--text-300,#8b8b8b)'; });
-  btn.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); onclick(); });
-  return btn;
-}
-
-function showBtn(btn) { btn.style.opacity = '1'; }
-function hideBtn(btn) { btn.style.opacity = '0'; }
 
 function getFormat() {
   return new Promise(resolve => {
@@ -60,200 +28,154 @@ function extractConvIdFromUrl(url) {
   return m ? m[1] : null;
 }
 
-function extractConvIdFromHref(el) {
-  const a = el.closest('a') || el.querySelector('a');
-  if (!a) return null;
-  return extractConvIdFromUrl(a.href);
-}
+// ── Collect selected conversation IDs from the chats page ────────────────────
 
-// ── Single chat export (active chat top bar) ──────────────────────────────────
+function getSelectedConvIds() {
+  // Selected rows have a checked checkbox; each row links to /chat/{uuid}
+  const ids = [];
 
-async function exportCurrentChat() {
-  console.log('[cce] export current chat');
-  try {
-    const convId = extractConvIdFromUrl(location.href);
-    if (!convId) { console.error('[cce] no conv id in url'); return; }
-    const format = await getFormat();
-    const orgId = await getOrgId();
-    const res = await sendToBackground('fetchConversation', { orgId, convId });
-    await exportSingle(res.data, format);
-  } catch (err) {
-    console.error('[cce] exportCurrentChat failed:', err.message);
-  }
-}
-
-function injectTopBarButton() {
-  if (document.querySelector('[data-cce="topbar"]')) return;
-
-  // Target: the right-side action cluster in the chat header
-  const shareBtn = Array.from(document.querySelectorAll('button')).find(
-    b => b.textContent.trim() === 'Share'
-  );
-  if (!shareBtn) return;
-
-  const btn = makeBtn('Export chat', exportCurrentChat);
-  btn.setAttribute('data-cce', 'topbar');
-  btn.style.opacity = '1';
-  btn.style.marginRight = '4px';
-  // Match share button sizing
-  btn.style.width = '32px';
-  btn.style.height = '32px';
-  shareBtn.parentElement.insertBefore(btn, shareBtn);
-  console.log('[cce] top bar button injected');
-}
-
-// ── Sidebar chat list rows ────────────────────────────────────────────────────
-
-async function exportConvById(convId) {
-  try {
-    const format = await getFormat();
-    const orgId = await getOrgId();
-    const res = await sendToBackground('fetchConversation', { orgId, convId });
-    await exportSingle(res.data, format);
-  } catch (err) {
-    console.error('[cce] exportConvById failed:', err.message);
-  }
-}
-
-function injectSidebarRowButton(row) {
-  if (row.querySelector('[data-cce="row"]')) return;
-  const convId = extractConvIdFromHref(row);
-  if (!convId) return;
-
-  const btn = makeBtn('Export chat', () => exportConvById(convId));
-  btn.setAttribute('data-cce', 'row');
-  btn.style.marginLeft = '4px';
-
-  // Find the ⋮ menu button if present, insert before it; else append
-  const menuBtn = row.querySelector('button');
-  if (menuBtn) {
-    menuBtn.parentElement.insertBefore(btn, menuBtn);
-  } else {
-    row.style.display = 'flex';
-    row.style.alignItems = 'center';
-    row.appendChild(btn);
-  }
-
-  row.addEventListener('mouseenter', () => showBtn(btn));
-  row.addEventListener('mouseleave', () => hideBtn(btn));
-}
-
-function injectSidebarRows() {
-  // Sidebar nav links for individual chats
-  const rows = document.querySelectorAll('nav a[href*="/chat/"]');
-  rows.forEach(injectSidebarRowButton);
-}
-
-// ── Chats page full list ──────────────────────────────────────────────────────
-
-function injectChatsPageRows() {
-  // Main chats list — each row is typically a div/li containing an anchor
-  const rows = document.querySelectorAll('main a[href*="/chat/"]');
-  rows.forEach(row => {
-    if (row.querySelector('[data-cce="row"]')) return;
-    const convId = extractConvIdFromUrl(row.href);
-    if (!convId) return;
-
-    const btn = makeBtn('Export chat', () => exportConvById(convId));
-    btn.setAttribute('data-cce', 'row');
-    btn.style.marginLeft = 'auto';
-    btn.style.paddingLeft = '8px';
-
-    row.style.display = 'flex';
-    row.style.alignItems = 'center';
-    row.appendChild(btn);
-
-    row.addEventListener('mouseenter', () => showBtn(btn));
-    row.addEventListener('mouseleave', () => hideBtn(btn));
+  // Strategy 1: checked checkboxes inside list rows
+  document.querySelectorAll('input[type="checkbox"]:checked').forEach(cb => {
+    const row = cb.closest('[href*="/chat/"]') || cb.closest('li,div[role="row"],tr');
+    if (!row) return;
+    const anchor = row.querySelector('a[href*="/chat/"]') || row.closest('a[href*="/chat/"]');
+    if (anchor) {
+      const id = extractConvIdFromUrl(anchor.href);
+      if (id && !ids.includes(id)) ids.push(id);
+    }
   });
+
+  // Strategy 2: rows with aria-selected="true"
+  if (ids.length === 0) {
+    document.querySelectorAll('[aria-selected="true"]').forEach(row => {
+      const anchor = row.querySelector('a[href*="/chat/"]') || row.closest('a[href*="/chat/"]');
+      if (anchor) {
+        const id = extractConvIdFromUrl(anchor.href);
+        if (id && !ids.includes(id)) ids.push(id);
+      }
+    });
+  }
+
+  // Strategy 3: any selected/active state class on rows
+  if (ids.length === 0) {
+    document.querySelectorAll('a[href*="/chat/"]').forEach(anchor => {
+      const row = anchor.closest('li,div[role="row"],tr,[class*="selected"],[class*="checked"]');
+      if (row && (row.getAttribute('aria-selected') === 'true' || row.classList.toString().match(/selected|checked/i))) {
+        const id = extractConvIdFromUrl(anchor.href);
+        if (id && !ids.includes(id)) ids.push(id);
+      }
+    });
+  }
+
+  console.log('[cce] selected conv ids:', ids);
+  return ids;
 }
 
-// ── Bulk export button (next to "Recents" header) ─────────────────────────────
+// ── Export selected chats ────────────────────────────────────────────────────
 
-async function runBulkExport() {
-  console.log('[cce] bulk export triggered');
+async function exportSelected() {
+  const ids = getSelectedConvIds();
+  if (ids.length === 0) {
+    console.warn('[cce] no selected conversations found');
+    return;
+  }
+  console.log(`[cce] exporting ${ids.length} selected chats`);
   try {
     const format = await getFormat();
     const orgId = await getOrgId();
-    const res = await sendToBackground('bulkExport', { orgId });
+    const res = await sendToBackground('selectedExport', { orgId, convIds: ids });
     await exportBulk(res.results, format);
   } catch (err) {
-    console.error('[cce] bulk export failed:', err.message);
+    console.error('[cce] exportSelected failed:', err.message);
   }
 }
 
-function injectBulkButton() {
-  if (document.querySelector('[data-cce="bulk"]')) return;
+// ── Inject download button into the selection action bar ─────────────────────
 
-  // "Recents" label + the filter icon sit in the same flex row
-  const recentsLabel = Array.from(document.querySelectorAll('*')).find(
-    el => el.childNodes.length === 1 &&
-          el.childNodes[0].nodeType === Node.TEXT_NODE &&
-          el.textContent.trim() === 'Recents'
+function injectSelectionBarButton() {
+  if (document.querySelector('[data-cce="sel-export"]')) return;
+
+  // The action bar appears when items are selected; it contains buttons like
+  // "Select all", "Move to project", "Delete", "Cancel"
+  const cancelBtn = Array.from(document.querySelectorAll('button')).find(
+    b => b.textContent.trim() === 'Cancel'
   );
-  if (!recentsLabel) return;
+  if (!cancelBtn) return;
 
-  const container = recentsLabel.parentElement;
-  if (!container) return;
+  const bar = cancelBtn.closest('div,nav,section,header,[role="toolbar"]');
+  if (!bar) return;
 
-  const btn = makeBtn('Export all chats', runBulkExport);
-  btn.setAttribute('data-cce', 'bulk');
-  btn.style.opacity = '1';
-  container.appendChild(btn);
-  console.log('[cce] bulk export button injected');
+  const btn = document.createElement('button');
+  btn.innerHTML = ICON_SVG;
+  btn.setAttribute('data-cce', 'sel-export');
+  btn.setAttribute('title', 'Export selected chats');
+  btn.style.cssText = [
+    'display:inline-flex',
+    'align-items:center',
+    'justify-content:center',
+    'gap:6px',
+    'padding:6px 12px',
+    'border:none',
+    'border-radius:6px',
+    'background:transparent',
+    'color:var(--text-300,#8b8b8b)',
+    'cursor:pointer',
+    'font-size:13px',
+    'transition:color 0.15s',
+  ].join(';');
+
+  btn.addEventListener('mouseenter', () => { btn.style.color = 'var(--text-100,#e8e8e8)'; });
+  btn.addEventListener('mouseleave', () => { btn.style.color = 'var(--text-300,#8b8b8b)'; });
+  btn.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); exportSelected(); });
+
+  // Insert before Cancel so it sits naturally in the bar
+  cancelBtn.parentElement.insertBefore(btn, cancelBtn);
+  console.log('[cce] selection bar export button injected');
 }
 
-// ── JSZip injection ───────────────────────────────────────────────────────────
+// ── JSZip + exporter loader ──────────────────────────────────────────────────
 
-function loadJSZip() {
+function loadScript(url) {
   return new Promise((resolve, reject) => {
-    if (window.JSZip) return resolve();
     const s = document.createElement('script');
-    s.src = chrome.runtime.getURL('jszip.min.js');
+    s.src = url;
     s.onload = resolve;
-    s.onerror = () => reject(new Error('JSZip failed to load'));
+    s.onerror = () => reject(new Error(`Failed to load: ${url}`));
     document.head.appendChild(s);
   });
 }
 
-function loadExporter() {
-  return new Promise((resolve, reject) => {
-    if (window._cceExporterLoaded) return resolve();
-    const s = document.createElement('script');
-    s.src = chrome.runtime.getURL('exporter.js');
-    s.onload = () => { window._cceExporterLoaded = true; resolve(); };
-    s.onerror = () => reject(new Error('exporter.js failed to load'));
-    document.head.appendChild(s);
-  });
+async function ensureLibs() {
+  if (!window.JSZip) await loadScript(chrome.runtime.getURL('jszip.min.js'));
+  if (!window._cceExporterLoaded) {
+    await loadScript(chrome.runtime.getURL('exporter.js'));
+    window._cceExporterLoaded = true;
+  }
 }
 
-// ── MutationObserver — react to navigation and DOM changes ───────────────────
+// ── MutationObserver ─────────────────────────────────────────────────────────
 
 let injectTimer = null;
 
 function scheduleInject() {
   clearTimeout(injectTimer);
-  injectTimer = setTimeout(runInject, 300);
-}
-
-function runInject() {
-  injectTopBarButton();
-  injectSidebarRows();
-  injectChatsPageRows();
-  injectBulkButton();
+  injectTimer = setTimeout(() => {
+    if (location.pathname === '/chats' || location.pathname.startsWith('/chats')) {
+      injectSelectionBarButton();
+    }
+  }, 300);
 }
 
 async function init() {
   try {
-    await loadJSZip();
-    await loadExporter();
-    console.log('[cce] scripts loaded, starting observer');
+    await ensureLibs();
+    console.log('[cce] libs loaded');
   } catch (err) {
-    console.error('[cce] init load error:', err.message);
+    console.error('[cce] init error:', err.message);
     return;
   }
 
-  runInject();
+  scheduleInject();
 
   const observer = new MutationObserver(scheduleInject);
   observer.observe(document.body, { childList: true, subtree: true });

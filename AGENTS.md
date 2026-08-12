@@ -37,16 +37,18 @@ All requests use `credentials: 'include'` (session cookie auth, no token injecti
 - Bulk export → single ZIP, one subfolder per conversation (named by title or UUID)
 
 ## UI Injection
-- **Active chat top bar** — download icon injected before the Share button
-- **Sidebar chat rows** — icon appears on hover alongside the ⋮ menu
-- **Chats page rows** — icon appears on hover, right-aligned near timestamp
-- **Bulk export** — icon injected next to the "Recents" header
+- **Chats page only** (`/chats`) — a download icon is injected into the selection action bar (the bar that appears when items are checked, alongside "Select all", "Delete", "Cancel")
+- Button only appears when the selection bar is visible; clicking it exports only the checked conversations
 - `MutationObserver` handles SPA navigation re-injection
+- No buttons in sidebar, active chat view, or anywhere else
 
-## Bulk Export
-- `background.js` fetches full conversation list, then fetches each individually
-- 500ms delay between each fetch to avoid rate limiting
-- Per-conversation success/failure reported back to caller
+## Export: Selected Chats
+- `getSelectedConvIds()` in `content.js` extracts UUIDs from checked rows via three strategies: checked checkboxes, `aria-selected="true"` rows, selected-class rows
+- Sends `selectedExport` to `background.js` with the list of UUIDs
+- `background.js` fetches each individually with 500ms delay, reports per-conversation success/failure
+
+## Bulk Export (full account)
+- `bulkExport` action in `background.js` still exists; fetches full conversation list then each individually with 500ms delay
 
 ## Version
-0.0.4.1
+1.0.0.0

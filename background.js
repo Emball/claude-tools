@@ -76,6 +76,32 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true;
   }
 
+  if (request.action === 'selectedExport') {
+    (async () => {
+      try {
+        const { orgId, convIds } = request;
+        console.log(`[bg] selected export: ${convIds.length} conversations`);
+        const results = [];
+        for (let i = 0; i < convIds.length; i++) {
+          const convId = convIds[i];
+          try {
+            const full = await fetchConversation(orgId, convId);
+            results.push({ success: true, data: full });
+            console.log(`[bg] fetched ${i + 1}/${convIds.length}: ${convId}`);
+          } catch (err) {
+            console.error(`[bg] failed to fetch ${convId}:`, err.message);
+            results.push({ success: false, uuid: convId, error: err.message });
+          }
+          if (i < convIds.length - 1) await delay(BULK_DELAY_MS);
+        }
+        sendResponse({ success: true, results });
+      } catch (err) {
+        sendResponse({ success: false, error: err.message });
+      }
+    })();
+    return true;
+  }
+
   if (request.action === 'bulkExport') {
     (async () => {
       try {

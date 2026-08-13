@@ -117,6 +117,8 @@ const ImageClassifier = (() => {
     if (text.length > 10) return text;
     console.log('[classifier] OCR pass 1 empty, retrying inverted + contrast boost');
     const inverted = invertAndBoost(canvas, 100);
+    // DEBUG: open inverted canvas in new tab so we can see what Tesseract sees
+    inverted.toBlob(b => { const u = URL.createObjectURL(b); window.open(u, '_blank'); });
     return runOCR(inverted);
   }
 

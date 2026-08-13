@@ -85,45 +85,11 @@ const ImageClassifier = (() => {
     });
   }
 
-  function invertAndBoost(source, contrast = 100) {
-    const canvas = document.createElement('canvas');
-    canvas.width = source.width;
-    canvas.height = source.height;
-    const ctx = canvas.getContext('2d');
-    ctx.drawImage(source, 0, 0);
-    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-    const d = imageData.data;
-    // Photoshop contrast formula
-    const factor = (259 * (contrast + 255)) / (255 * (259 - contrast));
-    for (let i = 0; i < d.length; i += 4) {
-      // Invert
-      let r = 255 - d[i];
-      let g = 255 - d[i + 1];
-      let b = 255 - d[i + 2];
-      // Contrast boost around midpoint
-      d[i]     = Math.min(255, Math.max(0, Math.round(factor * (r - 128) + 128)));
-      d[i + 1] = Math.min(255, Math.max(0, Math.round(factor * (g - 128) + 128)));
-      d[i + 2] = Math.min(255, Math.max(0, Math.round(factor * (b - 128) + 128)));
-    }
-    ctx.putImageData(imageData, 0, 0);
-    return canvas;
-  }
-
   async function runOCR(canvas) {
     const worker = await getWorker();
     const { data } = await worker.recognize(canvas);
     const confidentWords = (data.words || []).filter(w => w.confidence > 60);
     return confidentWords.map(w => w.text).join(' ').trim();
-  }
-
-  async function runOCRWithFallback(canvas) {
-    const text = await runOCR(canvas);
-    if (text.length > 10) return text;
-    console.log('[classifier] OCR pass 1 empty, retrying inverted + contrast boost');
-    const inverted = invertAndBoost(canvas, 100);
-    // DEBUG: open inverted canvas in new tab so we can see what Tesseract sees
-    inverted.toBlob(b => { const u = URL.createObjectURL(b); window.open(u, '_blank'); });
-    return runOCR(inverted);
   }
 
   async function classify(url, width, height, index) {
@@ -144,7 +110,7 @@ const ImageClassifier = (() => {
 
     try {
       const { canvas, blob } = await fetchToCanvas(url);
-      const text = await runOCRWithFallback(canvas);
+      const text = await runOCR(canvas);
       console.log(`[classifier] OCR extracted ${text.length} chars`);
 
       if (text.length > 10) {

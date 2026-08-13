@@ -33,15 +33,34 @@ All requests use `credentials: 'include'` (session cookie auth, no token injecti
 Bracket convention: anything that is not pure dialogue gets brackets. This makes exports scannable and unambiguous.
 
 - Messages prefixed `user:` / `assistant:` on their own line
-- Tool use: `[tool_name]`
 - Artifacts: `[artifact: filename.ext]` + fenced code block
 - Uploaded files: `[filename.ext: "extracted content"]`
 - Pasted text: `[pasted: "content"]`
-- Thinking blocks: omitted entirely
 - Images: three-tier system (see below)
 - Single export, no images → bare `.md`/`.txt`
 - Single export, images present → ZIP with file + `images/` folder, no subfolder nesting
 - Bulk export (2+ convos) → single ZIP, one subfolder per conversation
+
+### Toggleable Content (stored in `chrome.storage.sync`, off by default)
+
+**Thinking blocks** (`includethinking: false`)
+When off: omitted entirely.
+When on: rendered as italics immediately before the assistant turn they belong to:
+```
+*[thinking: Claude's internal reasoning here...]*
+
+assistant:
+The answer is...
+```
+
+**Tool calls + output** (`includeTools: false`)
+When off: collapsed to label only → `[web_search]`, `[bash]`, `[read_file]` etc.
+When on: expanded to show full input and output:
+```
+[bash: "cat /etc/hosts"]
+[output: "127.0.0.1 localhost\n::1 localhost"]
+```
+Tool results (`tool_result` blocks) are only rendered when this toggle is on — otherwise dropped entirely. This covers terminal runs, file reads/edits, and any other computer use actions visible in the Claude UI.
 
 ## Image Export — Three-Tier System (IN PROGRESS)
 Images are scored using multiple signals to determine handling:
@@ -69,7 +88,7 @@ Images are scored using multiple signals to determine handling:
 - `MutationObserver` handles SPA navigation re-injection
 
 ## Version
-Current version: 2.0.0.0
+Current version: 2.0.0.2
 
 ---
 

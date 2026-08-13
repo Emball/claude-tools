@@ -39,18 +39,14 @@ async function classifyAndRouteFile(file, images) {
   if (result.tier === 1) return `[screenshot: "${result.text}"]`;
   if (result.tier === 2) return `[screenshot: no extractable text]`;
 
-  // tier 3 — fetch blob and save to images folder
-  try {
-    const resp = await fetch(previewUrl, { credentials: 'include' });
-    const blob = await resp.blob();
-    const ext = blob.type.split('/')[1] || 'webp';
+  // tier 3 — blob already fetched by classifier, save to images folder
+  if (result.blob) {
+    const ext = result.blob.type.split('/')[1] || 'webp';
     const fname = file.file_name || `image_${images.length + 1}.${ext}`;
-    images.push({ filename: fname, blob });
+    images.push({ filename: fname, blob: result.blob });
     return `![${fname}](./images/${fname})`;
-  } catch (err) {
-    console.warn('[exporter] failed to fetch image blob:', err);
-    return `[image: ${file.file_name || 'unknown'} (fetch failed)]`;
   }
+  return `[image: ${file.file_name || 'unknown'} (fetch failed)]`;
 }
 
 async function contentBlocksToText(blocks, images, format) {

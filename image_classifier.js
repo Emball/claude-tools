@@ -62,13 +62,40 @@ const ImageClassifier = (() => {
         const canvas = document.createElement('canvas');
         canvas.width = img.width;
         canvas.height = img.height;
-        canvas.getContext('2d').drawImage(img, 0, 0);
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0);
+        // Invert colors for better OCR on dark-background UIs
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const d = imageData.data;
+        for (let i = 0; i < d.length; i += 4) {
+          d[i]     = 255 - d[i];
+          d[i + 1] = 255 - d[i + 1];
+          d[i + 2] = 255 - d[i + 2];
+        }
+        ctx.putImageData(imageData, 0, 0);
         URL.revokeObjectURL(objUrl);
         resolve({ canvas, blob });
       };
       img.onerror = () => { URL.revokeObjectURL(objUrl); reject(new Error('img load failed')); };
       img.src = objUrl;
     });
+  }
+
+  function invertCanvas(source) {
+    const canvas = document.createElement('canvas');
+    canvas.width = source.width;
+    canvas.height = source.height;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(source, 0, 0);
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const d = imageData.data;
+    for (let i = 0; i < d.length; i += 4) {
+      d[i]     = 255 - d[i];
+      d[i + 1] = 255 - d[i + 1];
+      d[i + 2] = 255 - d[i + 2];
+    }
+    ctx.putImageData(imageData, 0, 0);
+    return canvas;
   }
 
   async function runOCR(canvas) {
@@ -78,13 +105,20 @@ const ImageClassifier = (() => {
     return confidentWords.map(w => w.text).join(' ').trim();
   }
 
+  async function runOCRWithFallback(canvas) {
+    const text = await runOCR(canvas);
+    if (text.length > 10) return text;
+    console.log('[classifier] OCR pass 1 empty, retrying with inverted colors');
+    const inverted = invertCanvas(canvas);
+    return runOCR(inverted);
+  }
+
   async function classify(url, width, height, index) {
     const score = scoreImage(width, height);
     console.log(`[classifier] image ${index + 1}: ${width}x${height}, score=${score}`);
 
     if (score >= 3) {
       console.log('[classifier] tier 3 (photo by dimensions)');
-      // Still need the blob for ZIP packaging
       try {
         const resp = await fetch(url, { credentials: 'include' });
         const blob = await resp.blob();
@@ -97,7 +131,7 @@ const ImageClassifier = (() => {
 
     try {
       const { canvas, blob } = await fetchToCanvas(url);
-      const text = await runOCR(canvas);
+      const text = await runOCRWithFallback(canvas);
       console.log(`[classifier] OCR extracted ${text.length} chars`);
 
       if (text.length > 10) {

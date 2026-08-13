@@ -25,7 +25,27 @@ function sanitizeFilename(name) {
   return name.replace(/[^a-z0-9_\-. ]/gi, '_').trim().slice(0, 80);
 }
 
-function contentBlocksToText(blocks, images, format) {
+async function classifyAndRouteImage(block, images) {
+  if (!block.source) return '![image](unavailable)';
+
+  if (block.source.type === 'base64') {
+    const result = await ImageClassifier.classify(
+      block.source.data,
+      block.source.media_type || 'image/png',
+      images.length
+    );
+    if (result.tier === 1) return `[screenshot: "${result.text}"]`;
+    if (result.tier === 2) return `[screenshot: no extractable text]`;
+    // tier 3 — save to images folder
+    images.push({ filename: result.filename, data: result.data, mediaType: result.mediaType });
+    return `![${result.filename}](./images/${result.filename})`;
+  }
+
+  if (block.source.url) return `![image](${block.source.url})`;
+  return '![image](unavailable)';
+}
+
+async function contentBlocksToText(blocks, images, format) {
   if (!Array.isArray(blocks)) return '';
   const parts = [];
 
@@ -54,17 +74,10 @@ function contentBlocksToText(blocks, images, format) {
       continue;
     }
 
-    // Image block (user-uploaded screenshot or image)
+    // Image block — routed through three-tier classifier
     if (block.type === 'image') {
-      if (block.source && block.source.type === 'base64') {
-        const ext = (block.source.media_type || 'image/png').split('/')[1] || 'png';
-        const fname = `image_${images.length + 1}.${ext}`;
-        images.push({ filename: fname, data: block.source.data, mediaType: block.source.media_type });
-        parts.push(`![${fname}](./images/${fname})`);
-      } else if (block.source && block.source.url) {
-        // URL-referenced image — just embed the URL
-        parts.push(`![image](${block.source.url})`);
-      }
+      const rendered = await classifyAndRouteImage(block, images);
+      parts.push(rendered);
       continue;
     }
 
@@ -106,7 +119,7 @@ function contentBlocksToText(blocks, images, format) {
   return parts.join('\n\n');
 }
 
-function messageToText(msg, images, format) {
+async function messageToText(msg, images, format) {
   const role = msg.sender === 'human' ? 'user' : 'assistant';
   let body = '';
 
@@ -118,7 +131,7 @@ function messageToText(msg, images, format) {
       }
       return block;
     });
-    body = contentBlocksToText(processedBlocks, images, format);
+    body = await contentBlocksToText(processedBlocks, images, format);
   } else if (typeof msg.content === 'string') {
     body = msg.content;
   } else if (msg.text) {
@@ -144,10 +157,11 @@ function messageToText(msg, images, format) {
   return `${role}:\n${allParts.join('\n\n')}`;
 }
 
-function conversationToText(conv, format) {
+async function conversationToText(conv, format) {
   const images = [];
   const chain = buildMessageChain(conv);
-  const lines = chain.map(m => messageToText(m, images, format));
+  const lines = [];
+  for (const m of chain) lines.push(await messageToText(m, images, format));
   const text = lines.join('\n\n');
   console.log(`[exporter] rendered ${chain.length} messages, ${images.length} images`);
   return { text, images };

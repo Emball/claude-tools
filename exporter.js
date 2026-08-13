@@ -123,6 +123,16 @@ async function messageToText(msg, images, format) {
   const role = msg.sender === 'human' ? 'user' : 'assistant';
   let body = '';
 
+  // Debug: log raw structure of user messages with no visible text (likely images/files)
+  if (msg.sender === 'human') {
+    const hasText = (Array.isArray(msg.content) && msg.content.some(b => b.type === 'text' && b.text))
+      || (typeof msg.content === 'string' && msg.content.trim())
+      || msg.text;
+    if (!hasText) {
+      console.log('[exporter][debug] empty user msg:', JSON.stringify(msg, null, 2));
+    }
+  }
+
   if (Array.isArray(msg.content)) {
     // Check each block: if a text block has is_paste:true or context_uuid, treat as pasted
     const processedBlocks = msg.content.map(block => {

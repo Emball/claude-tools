@@ -37,7 +37,7 @@
   },
   "web_accessible_resources": [
     {
-      "resources": ["exporter.js", "jszip.min.js", "image_classifier.js", "worker.min.js"],
+      "resources": ["exporter.js", "jszip.min.js", "image_classifier.js", "worker.min.js", "eng.traineddata"],
       "matches": ["https://claude.ai/*"]
     }
   ]

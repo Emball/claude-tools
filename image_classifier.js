@@ -19,8 +19,12 @@ const ImageClassifier = (() => {
       const workerUrl = typeof chrome !== 'undefined' && chrome.runtime
         ? chrome.runtime.getURL('worker.min.js')
         : 'worker.min.js';
+      const langPath = typeof chrome !== 'undefined' && chrome.runtime
+        ? chrome.runtime.getURL('')
+        : './';
       const worker = await Tesseract.createWorker('eng', 1, {
         workerPath: workerUrl,
+        langPath: langPath,
         logger: () => {},
       });
       tesseractWorker = worker;

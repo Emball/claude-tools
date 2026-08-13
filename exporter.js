@@ -178,7 +178,7 @@ async function exportSingle(conv, format) {
   console.log(`[exporter] exporting single: ${conv.uuid}`);
   const ext = format === 'txt' ? 'txt' : 'md';
   const title = sanitizeFilename(conv.name || conv.uuid);
-  const { text, images } = conversationToText(conv, format);
+  const { text, images } = await conversationToText(conv, format);
 
   if (images.length === 0) {
     // Bare file — no ZIP, no subfolder
@@ -230,7 +230,7 @@ async function exportBulk(results, format) {
     const conv = result.data;
     const title = sanitizeFilename(conv.name || conv.uuid);
     const folder = zip.folder(title);
-    const { text, images } = conversationToText(conv, format);
+    const { text, images } = await conversationToText(conv, format);
     folder.file(`${title}.${ext}`, text);
     if (images.length > 0) {
       const imgFolder = folder.folder('images');

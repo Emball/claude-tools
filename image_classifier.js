@@ -11,14 +11,10 @@ const ImageClassifier = (() => {
 
   async function getWorker() {
     if (workerReady) return tesseractWorker;
-
-    if (workerLoading) {
-      return new Promise((res, rej) => workerQueue.push({ res, rej }));
-    }
+    if (workerLoading) return new Promise((res, rej) => workerQueue.push({ res, rej }));
 
     workerLoading = true;
     console.log('[classifier] loading Tesseract worker');
-
     try {
       const workerUrl = typeof chrome !== 'undefined' && chrome.runtime
         ? chrome.runtime.getURL('worker.min.js')
@@ -41,125 +37,80 @@ const ImageClassifier = (() => {
     }
   }
 
-  function scoreImage(base64Data, mediaType, width, height) {
-    let score = 0; // positive = photo, negative = screenshot
+  // Score using known dimensions + file size (from Content-Length if available)
+  // Returns positive = photo, negative/zero = screenshot
+  function scoreImage(width, height, byteSize) {
+    let score = 0;
 
-    // Aspect ratio check — known camera ratios
     if (width && height) {
       const ratio = width / height;
-      const cameraRatios = [4 / 3, 3 / 2, 16 / 9, 1, 3 / 4, 2 / 3];
-      const nearCamera = cameraRatios.some(r => Math.abs(ratio - r) / r < 0.02);
-      if (nearCamera) score += 2;
-
-      // Portrait = likely photo
-      if (height > width) score += 1;
-
-      // Standard desktop screenshot dimensions → screenshot signal
+      const cameraRatios = [4/3, 3/2, 16/9, 1, 3/4, 2/3];
+      if (cameraRatios.some(r => Math.abs(ratio - r) / r < 0.02)) score += 2;
+      if (height > width) score += 1; // portrait = likely photo
       const commonScreenWidths = [1920, 1440, 1366, 1280, 2560, 3840];
       if (commonScreenWidths.includes(width)) score -= 2;
     }
 
-    // Size estimate from base64 length (~75% efficiency)
-    const byteSize = (base64Data.length * 3) / 4;
-    if (byteSize > 1_000_000) score += 2;  // >1MB = likely photo
-    if (byteSize > 4_000_000) score += 2;  // >4MB = almost certainly photo
+    if (byteSize > 1_000_000) score += 2;
+    if (byteSize > 4_000_000) score += 2;
 
     return score;
   }
 
-  function base64ToImageData(base64Data, mediaType) {
+  async function loadImageToCanvas(url) {
     return new Promise((resolve, reject) => {
       const img = new Image();
+      img.crossOrigin = 'use-credentials';
       img.onload = () => {
         const canvas = document.createElement('canvas');
         canvas.width = img.width;
         canvas.height = img.height;
-        const ctx = canvas.getContext('2d');
-        ctx.drawImage(img, 0, 0);
-        resolve({ canvas, width: img.width, height: img.height });
+        canvas.getContext('2d').drawImage(img, 0, 0);
+        resolve(canvas);
       };
       img.onerror = reject;
-      img.src = `data:${mediaType};base64,${base64Data}`;
+      img.src = url;
     });
   }
 
   async function runOCR(canvas) {
     const worker = await getWorker();
     const { data } = await worker.recognize(canvas);
-    return data;
+    const confidentWords = (data.words || []).filter(w => w.confidence > 60);
+    return confidentWords.map(w => w.text).join(' ').trim();
   }
 
-  // Main classification entry point
-  // Returns { tier, text?, filename?, data?, mediaType? }
-  async function classify(base64Data, mediaType, existingIndex) {
-    const ext = (mediaType || 'image/png').split('/')[1] || 'png';
+  // Main entry: url (preview_url), width/height from preview_asset, index for filename
+  async function classify(url, width, height, index) {
+    // Claude recompresses to WebP ~500KB for screenshots, photos can be larger
+    // We don't have byte size upfront so rely on dimensions
+    const score = scoreImage(width, height, 0);
+    console.log(`[classifier] image ${index + 1}: ${width}x${height}, score=${score}`);
 
-    let width, height, canvas;
-    try {
-      const imgData = await base64ToImageData(base64Data, mediaType);
-      width = imgData.width;
-      height = imgData.height;
-      canvas = imgData.canvas;
-    } catch (err) {
-      console.warn('[classifier] failed to decode image, defaulting to tier 3:', err);
-      return {
-        tier: 3,
-        filename: `image_${existingIndex + 1}.${ext}`,
-        data: base64Data,
-        mediaType,
-      };
+    if (score >= 3) {
+      console.log('[classifier] tier 3 (photo by dimensions)');
+      return { tier: 3 };
     }
 
-    const photoScore = scoreImage(base64Data, mediaType, width, height);
-    console.log(`[classifier] image ${existingIndex + 1}: ${width}x${height}, score=${photoScore}`);
-
-    // High photo score — skip OCR, save as file
-    if (photoScore >= 3) {
-      console.log('[classifier] tier 3 (photo, high score)');
-      return {
-        tier: 3,
-        filename: `image_${existingIndex + 1}.${ext}`,
-        data: base64Data,
-        mediaType,
-      };
-    }
-
-    // Ambiguous or screenshot-leaning — run OCR
+    // Run OCR to distinguish screenshot-with-text vs screenshot-no-text vs photo
     try {
-      const ocrData = await runOCR(canvas);
-      const words = ocrData.words || [];
-      const confidentWords = words.filter(w => w.confidence > 60);
-      const extractedText = confidentWords.map(w => w.text).join(' ').trim();
+      const canvas = await loadImageToCanvas(url);
+      const text = await runOCR(canvas);
+      console.log(`[classifier] OCR extracted ${text.length} chars`);
 
-      console.log(`[classifier] OCR: ${confidentWords.length} confident words, confidence avg=${
-        confidentWords.length ? Math.round(confidentWords.reduce((s, w) => s + w.confidence, 0) / confidentWords.length) : 0
-      }`);
-
-      if (extractedText.length > 10) {
+      if (text.length > 10) {
         console.log('[classifier] tier 1 (screenshot with text)');
-        return { tier: 1, text: extractedText };
+        return { tier: 1, text };
+      } else if (score > 0) {
+        console.log('[classifier] tier 3 (photo, low OCR)');
+        return { tier: 3 };
       } else {
-        // OCR found nothing useful — but if photo score is positive, save as file
-        if (photoScore > 0) {
-          console.log('[classifier] tier 3 (photo, low OCR)');
-          return {
-            tier: 3,
-            filename: `image_${existingIndex + 1}.${ext}`,
-            data: base64Data,
-            mediaType,
-          };
-        }
         console.log('[classifier] tier 2 (screenshot, no text)');
         return { tier: 2 };
       }
     } catch (err) {
       console.warn('[classifier] OCR failed, defaulting to tier 3:', err);
-      return {
-        tier: 3,
-        filename: `image_${existingIndex + 1}.${ext}`,
-        data: base64Data,
-        mediaType,
-      };
+      return { tier: 3 };
     }
   }
 

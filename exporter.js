@@ -25,24 +25,32 @@ function sanitizeFilename(name) {
   return name.replace(/[^a-z0-9_\-. ]/gi, '_').trim().slice(0, 80);
 }
 
-async function classifyAndRouteImage(block, images) {
-  if (!block.source) return '![image](unavailable)';
+async function classifyAndRouteFile(file, images) {
+  const previewUrl = file.preview_url
+    ? (file.preview_url.startsWith('http') ? file.preview_url : `https://claude.ai${file.preview_url}`)
+    : null;
+  if (!previewUrl) return `[image: ${file.file_name || 'unknown'} (no preview available)]`;
 
-  if (block.source.type === 'base64') {
-    const result = await ImageClassifier.classify(
-      block.source.data,
-      block.source.media_type || 'image/png',
-      images.length
-    );
-    if (result.tier === 1) return `[screenshot: "${result.text}"]`;
-    if (result.tier === 2) return `[screenshot: no extractable text]`;
-    // tier 3 — save to images folder
-    images.push({ filename: result.filename, data: result.data, mediaType: result.mediaType });
-    return `![${result.filename}](./images/${result.filename})`;
+  const width = file.preview_asset && file.preview_asset.image_width;
+  const height = file.preview_asset && file.preview_asset.image_height;
+
+  const result = await ImageClassifier.classify(previewUrl, width, height, images.length);
+
+  if (result.tier === 1) return `[screenshot: "${result.text}"]`;
+  if (result.tier === 2) return `[screenshot: no extractable text]`;
+
+  // tier 3 — fetch blob and save to images folder
+  try {
+    const resp = await fetch(previewUrl, { credentials: 'include' });
+    const blob = await resp.blob();
+    const ext = blob.type.split('/')[1] || 'webp';
+    const fname = file.file_name || `image_${images.length + 1}.${ext}`;
+    images.push({ filename: fname, blob });
+    return `![${fname}](./images/${fname})`;
+  } catch (err) {
+    console.warn('[exporter] failed to fetch image blob:', err);
+    return `[image: ${file.file_name || 'unknown'} (fetch failed)]`;
   }
-
-  if (block.source.url) return `![image](${block.source.url})`;
-  return '![image](unavailable)';
 }
 
 async function contentBlocksToText(blocks, images, format) {
@@ -74,10 +82,9 @@ async function contentBlocksToText(blocks, images, format) {
       continue;
     }
 
-    // Image block — routed through three-tier classifier
+    // Image blocks in content array are rare/legacy — files[] is the real source (handled in messageToText)
     if (block.type === 'image') {
-      const rendered = await classifyAndRouteImage(block, images);
-      parts.push(rendered);
+      console.log('[exporter] unexpected inline image block — skipping (should be in files[])');
       continue;
     }
 
@@ -163,7 +170,21 @@ async function messageToText(msg, images, format) {
     }
   }
 
-  const allParts = [body.trim(), ...attachmentParts].filter(Boolean);
+  // Handle msg.files[] — images uploaded by user
+  const fileParts = [];
+  if (Array.isArray(msg.files)) {
+    for (const file of msg.files) {
+      if (!file.success) continue;
+      if (file.file_kind === 'image') {
+        const rendered = await classifyAndRouteFile(file, images);
+        fileParts.push(rendered);
+      } else {
+        fileParts.push(`[${file.file_name || 'file'}: (binary, not extractable)]`);
+      }
+    }
+  }
+
+  const allParts = [body.trim(), ...attachmentParts, ...fileParts].filter(Boolean);
   return `${role}:\n${allParts.join('\n\n')}`;
 }
 
@@ -207,7 +228,7 @@ async function exportSingle(conv, format) {
   const zip = new JSZip();
   zip.file(`${title}.${ext}`, text);
   images.forEach(img => {
-    zip.folder('images').file(img.filename, base64ToUint8Array(img.data));
+    zip.folder('images').file(img.filename, img.blob);
   });
   const blob = await zip.generateAsync({ type: 'blob' });
   const url = URL.createObjectURL(blob);
@@ -244,7 +265,7 @@ async function exportBulk(results, format) {
     folder.file(`${title}.${ext}`, text);
     if (images.length > 0) {
       const imgFolder = folder.folder('images');
-      images.forEach(img => imgFolder.file(img.filename, base64ToUint8Array(img.data)));
+      images.forEach(img => imgFolder.file(img.filename, img.blob));
     }
     ok++;
   }

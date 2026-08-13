@@ -1,7 +1,7 @@
 # AGENTS.md
 
 ## Project
-Chrome/Edge (Manifest V3) extension that exports Claude.ai chats as Markdown or plain text. Private repo, no ads, no telemetry. Self-loaded as an unpacked extension.
+**Claude Tools** — Chrome/Edge (Manifest V3) extension. Currently implements a chat exporter module. Planned as a multi-module power-user toolkit for Claude.ai. Private repo, no ads, no telemetry. Self-loaded as an unpacked extension.
 
 ## File Structure
 - `manifest.json` — MV3 manifest; declares permissions, content scripts, service worker, and web-accessible resources
@@ -21,34 +21,97 @@ All requests use `credentials: 'include'` (session cookie auth, no token injecti
 | List all convos | GET | `/api/organizations/{orgId}/chat_conversations` |
 | Fetch single convo | GET | `/api/organizations/{orgId}/chat_conversations/{uuid}?tree=True&rendering_mode=messages&render_all_tools=true` |
 | List projects | GET | `/api/organizations/{orgId}/projects` |
+| Rename convo | PATCH | `/api/organizations/{orgId}/chat_conversations/{uuid}` (body: `{ name }`) |
+| Delete convo | DELETE | `/api/organizations/{orgId}/chat_conversations/{uuid}` |
+| Account info | GET | `/api/account` or `/api/me` (unconfirmed — verify before use) |
 
 - `orgId` detected by hitting `/api/organizations` and finding the org with `capabilities` including `"chat"` (falls back to first org).
 - Conversation list returns a flat array — no pagination observed.
 - Messages are a tree; `current_leaf_message_uuid` + `parent_message_uuid` chain is walked to reconstruct the active branch.
 
 ## Export Format
+Bracket convention: anything that is not pure dialogue gets brackets. This makes exports scannable and unambiguous.
+
 - Messages prefixed `user:` / `assistant:` on their own line
-- Tool use: `[tool: name]` header + fenced JSON block
-- Tool results: `[tool_result]` header + fenced block
-- Artifacts: `[artifact: filename.ext]` header + fenced code block
+- Tool use: `[tool_name]`
+- Artifacts: `[artifact: filename.ext]` + fenced code block
+- Uploaded files: `[filename.ext: "extracted content"]`
+- Pasted text: `[pasted: "content"]`
 - Thinking blocks: omitted entirely
-- Images: saved as separate files in `images/`; MD uses relative links `./images/filename.png`
-- No images → bare `.md`/`.txt` file download; images present → ZIP with file + `images/` folder
-- Bulk export → single ZIP, one subfolder per conversation (named by title or UUID)
+- Images: three-tier system (see below)
+- Single export, no images → bare `.md`/`.txt`
+- Single export, images present → ZIP with file + `images/` folder, no subfolder nesting
+- Bulk export (2+ convos) → single ZIP, one subfolder per conversation
 
-## UI Injection
-- **Chats page only** (`/chats`) — a download icon is injected into the selection action bar (the bar that appears when items are checked, alongside "Select all", "Delete", "Cancel")
-- Button only appears when the selection bar is visible; clicking it exports only the checked conversations
+## Image Export — Three-Tier System (IN PROGRESS)
+Images are scored using multiple signals to determine handling:
+
+**Scoring signals:**
+- Aspect ratio matches known camera ratio (4:3, 16:9, 3:2, 1:1) within 2% → strong photo signal
+- Portrait orientation → moderate photo signal
+- File size over 1MB → moderate photo signal
+- Tesseract OCR finds substantial text → strong screenshot signal
+- Landscape + non-standard dimensions → moderate screenshot signal
+
+**Tiers:**
+- **Tier 1 — Screenshot with text**: Tesseract extracts text → `[screenshot: "extracted text"]`
+- **Tier 2 — Screenshot, no text**: OCR finds nothing → `[screenshot: no extractable text]`
+- **Tier 3 — Photo / large file**: Saved to `images/` folder, referenced in MD → triggers ZIP
+
+**Notes:**
+- Claude app recompresses uploads to WebP (~500KB). Raw camera JPGs can be ~4MB. Size alone is not sufficient — use combined scoring.
+- Tesseract.js accuracy on dark-themed UIs with small monospace fonts may require confidence thresholding.
+- Portrait orientation is a strong photo signal since desktop screenshots are virtually never portrait.
+
+## UI Injection Points
+- **Active chat top bar** — icon-only download button injected before the Share button; exports current chat as single file
+- **Chats page selection bar** (`/chats`) — "Export" button injected next to Cancel when items are checked; exports only selected conversations. Single selection routes through `exportSingle` (no ZIP/subfolder).
 - `MutationObserver` handles SPA navigation re-injection
-- No buttons in sidebar, active chat view, or anywhere else
-
-## Export: Selected Chats
-- `getSelectedConvIds()` in `content.js` extracts UUIDs from checked rows via three strategies: checked checkboxes, `aria-selected="true"` rows, selected-class rows
-- Sends `selectedExport` to `background.js` with the list of UUIDs
-- `background.js` fetches each individually with 500ms delay, reports per-conversation success/failure
-
-## Bulk Export (full account)
-- `bulkExport` action in `background.js` still exists; fetches full conversation list then each individually with 500ms delay
 
 ## Version
-1.0.0.0
+Current version: 2.0.0.0
+
+---
+
+## Planned Modules
+
+### Module 2 — Session Chaining
+Allows chaining multiple Claude chat sessions into a single continuous conversation context, enabling seamless account-switching when hitting quota limits.
+
+**Core concept:**
+- User assigns chats to a named chain via extension UI
+- Chain metadata stored in `chrome.storage.sync` keyed by org UUID (account identifier)
+- Chat titles are automatically renamed with a structured tag: `[cct: chain-name | N]` where N is position
+- Title tag acts as external anchor — chain can be reconstructed from titles alone even if local storage is lost
+- Account association stored locally per chain entry (org UUID, email if `/api/me` confirms it)
+
+**Injection flow:**
+- On new chat, if active chain exists, extension injects prior session transcript directly into the input box as pasted text (not file upload — pasted text is never truncated regardless of length)
+- Injection includes a system header explaining the chaining context to Claude so it can collaborate seamlessly:
+  ```
+  [Claude Tools — Session Continuation]
+  Chain: <name> | Session <N>. Continue naturally from the transcript below.
+  [TRANSCRIPT START]
+  ...
+  [TRANSCRIPT END]
+  ```
+- Claude sees the header and understands the context without user explanation
+
+**Background compression (optional, future):**
+- Spin up a hidden conversation via API
+- Send transcript + compression instructions
+- Receive summary, store in extension
+- Delete the temporary conversation via DELETE endpoint
+- User never sees this happen
+
+**Chain organizer UI:**
+- Lives in extension popup or dedicated page
+- List of chains, each showing member chats in order with account association
+- Connect button assigns current chat to chain and triggers rename
+- Chain membership visible in Claude sidebar via title tags
+
+### Module 3 — Prompt Library
+TBD — store, organize, and inject reusable prompts into the input box.
+
+### Module 4 — Conversation Search
+TBD — full-text search across all conversations in the current account using the list + fetch APIs.

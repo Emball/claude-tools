@@ -58,6 +58,14 @@ function delay(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+// Pre-create offscreen doc on extension startup so Tesseract warms up early
+chrome.runtime.onInstalled.addListener(() => {
+  ensureOffscreen().catch(err => console.error('[bg] offscreen pre-create failed:', err));
+});
+chrome.runtime.onStartup.addListener(() => {
+  ensureOffscreen().catch(err => console.error('[bg] offscreen pre-create failed:', err));
+});
+
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   console.log('[bg] message:', request.action);
 
@@ -71,7 +79,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           const timer = setTimeout(() => {
             chrome.runtime.onMessage.removeListener(listener);
             reject(new Error('OCR timeout'));
-          }, 30000);
+          }, 120000);
           function listener(msg) {
             if (msg.action === 'ocr_result' && msg.id === id) {
               clearTimeout(timer);

@@ -42,6 +42,9 @@ function invertDataUrl(dataUrl) {
   });
 }
 
+// Pre-warm: init worker immediately on load so traineddata downloads in background
+getWorker().catch(err => console.error('[ocr_offscreen] pre-warm failed:', err));
+
 chrome.runtime.onMessage.addListener((msg) => {
   if (msg.target !== 'offscreen' || msg.action !== 'ocr') return;
 

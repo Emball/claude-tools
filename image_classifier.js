@@ -1,22 +1,30 @@
 // image_classifier.js — content script
-// Injects tesseract.min.js + ocr_page.js into the page context (separate JS world).
-// Communicates via postMessage bridge since content scripts can't access page-world globals.
+// Spawns a hidden iframe pointing at ocr_frame.html (extension page context).
+// Extension pages can load Tesseract without any blob-worker origin restrictions.
+// Communicates via postMessage bridge.
 
-let pageScriptReady = null;
+let frameReady = null;
 let pendingRequests = {};
 let requestId = 0;
 
-function injectPageScript() {
-  if (pageScriptReady) return pageScriptReady;
+function getFrame() {
+  if (frameReady) return frameReady;
 
-  pageScriptReady = new Promise((resolve, reject) => {
+  frameReady = new Promise((resolve, reject) => {
+    const frame = document.createElement('iframe');
+    frame.src = chrome.runtime.getURL('ocr_frame.html');
+    frame.style.cssText = 'display:none!important;width:0;height:0;border:0;position:absolute;';
+    frame.id = 'cce-ocr-frame';
+
     window.addEventListener('message', function handler(e) {
-      if (e.source !== window) return;
+      if (e.source !== frame.contentWindow) return;
+
       if (e.data && e.data.__cce_ocr_ready) {
-        console.log('[classifier] page OCR script ready');
-        resolve();
+        console.log('[classifier] OCR frame ready');
+        resolve(frame);
         return;
       }
+
       if (e.data && e.data.__cce_ocr_result !== undefined) {
         const { id, result } = e.data.__cce_ocr_result;
         if (pendingRequests[id]) {
@@ -26,56 +34,34 @@ function injectPageScript() {
       }
     });
 
-    // Step 1: inject tesseract.min.js
-    const lib = document.createElement('script');
-    lib.id = 'cce-tesseract';
-    lib.src = chrome.runtime.getURL('tesseract.min.js');
-    lib.onload = () => {
-      // Step 2: inject ocr_page.js with paths as data attributes (avoids inline scripts)
-      const page = document.createElement('script');
-      page.id = 'cce-ocr-page';
-      page.src = chrome.runtime.getURL('ocr_page.js');
-      page.dataset.workerPath = chrome.runtime.getURL('worker.min.js');
-      page.dataset.corePath   = chrome.runtime.getURL('');
-      page.dataset.langPath   = chrome.runtime.getURL('');
-      page.dataset.tdUrl      = chrome.runtime.getURL('eng.traineddata');
-      page.onerror = reject;
-      (document.head || document.documentElement).appendChild(page);
-    };
-    lib.onerror = reject;
-    (document.head || document.documentElement).appendChild(lib);
+    frame.onerror = reject;
+    (document.body || document.documentElement).appendChild(frame);
   });
 
-  return pageScriptReady;
+  return frameReady;
 }
 
 async function ocrDataUrl(dataUrl) {
-  await injectPageScript();
-  return new Promise((resolve) => {
+  const frame = await getFrame();
+  return new Promise(resolve => {
     const id = ++requestId;
     pendingRequests[id] = resolve;
-    window.postMessage({ __cce_ocr_request: { id, dataUrl } }, '*');
+    frame.contentWindow.postMessage({ __cce_ocr_request: { id, dataUrl } }, '*');
   });
 }
 
-// Known photo aspect ratios (width:height) produced by cameras and phones.
-// Screenshots are arbitrary crops and almost never land on these exactly.
-// Tolerance of 0.02 allows for minor rounding in thumbnails.
+// Known photo aspect ratios (width:height). Screenshots rarely land on these exactly.
 const PHOTO_RATIOS = [
-  4/3, 3/4,   // classic camera
-  3/2, 2/3,   // DSLR / 35mm
-  16/9, 9/16, // widescreen / portrait video
-  1/1,        // square
-  5/4, 4/5,
-  5/3, 3/5,
-  7/5, 5/7,
-  16/10, 10/16,
+  4/3, 3/4, 3/2, 2/3, 16/9, 9/16, 1/1,
+  5/4, 4/5, 5/3, 3/5, 7/5, 5/7, 16/10, 10/16,
 ];
 const RATIO_TOLERANCE = 0.02;
 
 function looksLikePhoto(width, height) {
   if (!width || !height) return false;
   const ratio = width / height;
+  // Portrait orientation on desktop = almost certainly a photo
+  if (height > width) return true;
   return PHOTO_RATIOS.some(r => Math.abs(ratio - r) <= RATIO_TOLERANCE);
 }
 
@@ -90,16 +76,16 @@ async function classifyFromUrl(url, width, height, index) {
     return { tier: 3, blob: null };
   }
 
-  // Photos go straight to tier 3 — no point running OCR on them
+  // Photos → tier 3 immediately, no OCR needed
   if (looksLikePhoto(width, height)) {
-    console.log(`[classifier] image ${index}: photo ratio (${width}x${height}) → tier 3`);
+    console.log(`[classifier] image ${index}: photo (${width}x${height}) → tier 3`);
     return { tier: 3, blob };
   }
 
-  // Non-photo dimensions = screenshot candidate → run OCR
+  // Screenshot candidate → OCR
   const dataUrl = await new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onload = () => resolve(reader.result);
+    reader.onload  = () => resolve(reader.result);
     reader.onerror = reject;
     reader.readAsDataURL(blob);
   });
@@ -124,6 +110,9 @@ const ImageClassifier = {
     return await classifyFromUrl(previewUrl, width, height, index);
   },
   async terminate() {
-    console.log('[classifier] terminate called (worker lives in page context)');
+    const el = document.getElementById('cce-ocr-frame');
+    if (el) el.remove();
+    frameReady = null;
+    console.log('[classifier] OCR frame removed');
   },
 };

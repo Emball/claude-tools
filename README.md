@@ -4,11 +4,8 @@
 
 <h1 align="center">Claudette</h1>
 
+<p align="center"><em>Chromim companion extension for Claude.ai power users.</em></p> 
 <p align="center"><em>Designed for Claude by Claude. They say we're soulmates!</em></p>
-
-<p align="center">A Chromium extension designed for Claude.ai power users that adds the ability to export chats, manage multi-account and multi-session projects, and much more.</p>
-
-<p align="center">Designed to be as clean as possible with no ads, annoying GUI elements or distractions.</p>
 
 ---
 

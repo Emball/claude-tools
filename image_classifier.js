@@ -21,7 +21,7 @@ async function getWorker() {
   const workerPath   = URL.createObjectURL(workerBlob);
 
   const langPath = chrome.runtime.getURL('');  // folder — Tesseract appends "eng.traineddata"
-  const corePath = chrome.runtime.getURL('tesseract.min.js');
+  const corePath = chrome.runtime.getURL('tesseract-core-lstm.wasm.js');
 
   worker = await Tesseract.createWorker('eng', Tesseract.OEM.LSTM_ONLY, {
     workerPath,

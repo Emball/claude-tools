@@ -287,7 +287,7 @@ function injectSelectionBarButton() {
   btn.setAttribute('title', 'Export selected chats');
   btn.setAttribute('data-cds', 'Button');
   btn.setAttribute('aria-pressed', 'false');
-  btn.innerHTML = `<span class="inline-flex min-w-0 items-center gap-1 ">Export</span>`;
+  btn.innerHTML = `<span aria-hidden="true" class="absolute -z-[1] rounded-[inherit] inset-0 cds-btn-squish"></span><span class="inline-flex min-w-0 items-center gap-1 ">Export</span>`;
   btn.className = cancelBtn.className;
   btn.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); exportSelected(); });
   buttonRow.insertBefore(btn, cancelBtn);
@@ -308,7 +308,7 @@ function injectChatTopBarButton() {
   btn.setAttribute('title', 'Export this chat');
   btn.setAttribute('aria-pressed', 'false');
   btn.className = shareBtn.className;
-  btn.innerHTML = `<span class="inline-flex min-w-0 items-center gap-1 ">Export</span>`;
+  btn.innerHTML = `<span aria-hidden="true" class="absolute -z-[1] rounded-[inherit] inset-0 cds-btn-squish"></span><span class="inline-flex min-w-0 items-center gap-1 ">Export</span>`;
   btn.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); exportCurrentChat(); });
   shareBtn.parentElement.insertBefore(btn, shareBtn);
   console.log('[cce] chat top bar export button injected');

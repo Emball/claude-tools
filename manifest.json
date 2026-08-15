@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Claudette",
-  "version": "2.7.0",
+  "version": "3.0.0",
   "description": "Export Claude.ai chats as Markdown or plain text with images.",
   "permissions": [
     "storage",
@@ -49,8 +49,10 @@
         "ocr_engine.js",
         "tesseract.min.js",
         "worker.min.js",
+        "worker-overwrites.js",
         "tesseract-core-simd-lstm.wasm.js",
-        "tesseract-core-lstm.wasm.js",
+        "tesseract-core-simd-lstm.wasm",
+        "tesseract-core-simd-lstm.js",
         "exporter.js",
         "jszip.min.js",
         "image_classifier.js"
@@ -59,5 +61,8 @@
         "<all_urls>"
       ]
     }
-  ]
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'; worker-src 'self';"
+  }
 }

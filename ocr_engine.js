@@ -30,13 +30,12 @@ window.addEventListener('message', async e => {
   const { id, dataUrl } = e.data.__cce_engine_run;
 
   try {
-    const base = chrome.runtime.getURL('');
     const worker = await Tesseract.createWorker('eng', 1, {
       workerBlobURL: false,
-      workerPath:    base + 'worker.min.js',
-      corePath:      base + 'tesseract-core-simd-lstm.wasm.js',
+      workerPath:    'worker-overwrites.js',
+      corePath:      'tesseract-core-simd-lstm.wasm.js',
+      cacheMethod:   'none',
       langPath:      'https://tessdata.projectnaptha.com/4.0.0',
-      cacheMethod:   'write',
       logger:        () => {},
     });
 

@@ -10,6 +10,14 @@ const EXPORTER_DEFAULTS = {
   zipFiles: true,
 };
 
+// Returns a backtick fence string safe to wrap `content` in.
+// Finds the longest run of backticks in the content and uses one more (min 3).
+function safeFence(content) {
+  const runs = content.match(/`+/g) || [];
+  const max  = runs.reduce((m, r) => Math.max(m, r.length), 2);
+  return '`'.repeat(max + 1);
+}
+
 function loadSettings() {
   return new Promise(resolve =>
     chrome.storage.sync.get(EXPORTER_DEFAULTS, resolve)
@@ -93,13 +101,15 @@ async function classifyAndRouteFile(file, images, settings, imageIndex, imageTot
   if (result.tier === 'photo-nozip')
     return `*<Photo: ${fname}>*`;
 
-  if (result.tier === 'screenshot-text')
-    return `*<Screenshot: ${fname}>*\n\`\`\`\n${result.text}\n\`\`\``;
+  if (result.tier === 'screenshot-text') {
+    const f = safeFence(result.text);
+    return `*<Screenshot: ${fname}>*\n${f}\n${result.text}\n${f}`;
+  }
 
   if (result.tier === 'screenshot-notext')
     return `*<Screenshot: ${fname}>*\n\`\`\`\nno extractable text\n\`\`\``;
 
-  // 'save' — write blob to images folder
+  // 'save' — write blob to ZIP root
   if (result.tier === 'save' && result.blob) {
     const ext   = result.blob.type.split('/')[1] || 'webp';
     const iname = file.file_name || `image_${images.length + 1}.${ext}`;
@@ -130,7 +140,8 @@ async function contentBlocksToText(blocks, images, nonImageFiles, settings, imgC
     if (block.type === 'text') {
       if (block.is_paste || block.paste_id) {
         const content = (block.text || '').trim();
-        parts.push(`*<Pasted>*\n\`\`\`\n${content}\n\`\`\``);
+        const f0 = safeFence(content);
+        parts.push(`*<Pasted>*\n${f0}\n${content}\n${f0}`);
       } else {
         parts.push(block.text || '');
       }
@@ -143,7 +154,8 @@ async function contentBlocksToText(blocks, images, nonImageFiles, settings, imgC
       const title = block.title || name;
       if (block.input && Object.keys(block.input).length > 0) {
         const inputStr = JSON.stringify(block.input, null, 2);
-        parts.push(`> **${title}**\n\`\`\`json\n${inputStr}\n\`\`\``);
+        const f1 = safeFence(inputStr);
+        parts.push(`> **${title}**\n${f1}json\n${inputStr}\n${f1}`);
       } else {
         parts.push(`> **${title}**`);
       }
@@ -155,7 +167,7 @@ async function contentBlocksToText(blocks, images, nonImageFiles, settings, imgC
       const content = Array.isArray(block.content)
         ? block.content.map(c => c.text || '').join('\n')
         : (block.content || '');
-      if (content.trim()) parts.push(`\`\`\`\n${content.trim()}\n\`\`\``);
+      if (content.trim()) { const f2 = safeFence(content); parts.push(`${f2}\n${content.trim()}\n${f2}`); }
       continue;
     }
 
@@ -170,7 +182,8 @@ async function contentBlocksToText(blocks, images, nonImageFiles, settings, imgC
       const lang    = block.language || inferLang(fname, block.content);
       const content = block.content || '';
       const comment = lang === 'python' ? `# ${fname}` : `// ${fname}`;
-      parts.push(`\`\`\`${lang}\n${comment}\n${content}\n\`\`\``);
+      const f3 = safeFence(content);
+      parts.push(`${f3}${lang}\n${comment}\n${content}\n${f3}`);
       continue;
     }
 
@@ -179,7 +192,8 @@ async function contentBlocksToText(blocks, images, nonImageFiles, settings, imgC
       const text = block.text || block.document?.text || block.document?.content || '';
       const lang  = inferLang(name, text);
       const comment = lang === 'python' ? `# ${name}` : `// ${name}`;
-      const entry = `*<File: ${name}>*\n\`\`\`${lang}\n${comment}\n${text.trim()}\n\`\`\``;
+      const f4 = safeFence(text);
+      const entry = `*<File: ${name}>*\n${f4}${lang}\n${comment}\n${text.trim()}\n${f4}`;
       if (settings.zipFiles) nonImageFiles.push({ filename: name, content: text.trim() });
       parts.push(entry);
       continue;
@@ -187,7 +201,8 @@ async function contentBlocksToText(blocks, images, nonImageFiles, settings, imgC
 
     if (block.type === 'context') {
       const content = block.body || block.content || block.text || '';
-      parts.push(`*<Pasted>*\n\`\`\`\n${content.trim()}\n\`\`\``);
+      const f5 = safeFence(content);
+      parts.push(`*<Pasted>*\n${f5}\n${content.trim()}\n${f5}`);
       continue;
     }
 

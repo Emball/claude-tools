@@ -36,13 +36,7 @@ function injectStyles() {
       padding: 8px 10px 6px;
       width: 220px;
       box-shadow: 0 4px 16px rgba(0,0,0,0.5);
-      opacity: 0;
-      pointer-events: none;
       transition: opacity 0.2s;
-    }
-    .cce-progress-bar-wrap.visible {
-      opacity: 1;
-      pointer-events: auto;
     }
     .cce-progress-label {
       font-size: 10px;
@@ -138,27 +132,9 @@ function createProgressBar(anchorEl) {
   const bar = { wrap, fill, label: lbl };
   _progressBars.push(bar);
 
-  // Hover to show/hide with 5s leave delay
-  let hideTimer = null;
-  wrap.addEventListener('mouseenter', () => {
-    clearTimeout(hideTimer);
-    wrap.classList.add('visible');
-  });
-  wrap.addEventListener('mouseleave', () => {
-    hideTimer = setTimeout(() => wrap.classList.remove('visible'), 5000);
-  });
-
   // Anchor must be position:relative for absolute child to work
   anchorEl.style.position = 'relative';
   anchorEl.appendChild(wrap);
-
-  // Show immediately
-  wrap.classList.add('visible');
-
-  // Start 5s hide timer — disappears unless hovered
-  hideTimer = setTimeout(() => {
-    if (!wrap.matches(':hover')) wrap.classList.remove('visible');
-  }, 5000);
 
   return bar;
 }

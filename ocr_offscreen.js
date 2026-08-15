@@ -1,6 +1,6 @@
 // ocr_offscreen.js — runs in chrome.offscreen document (extension context, no host CSP)
-// Receives OCR requests from background.js via chrome.runtime.onMessage,
-// runs Tesseract, returns results.
+// Receives OCR requests from background.js, runs Tesseract, replies via sendMessage.
+// Cannot use sendResponse for async replies — sends a separate message back instead.
 
 let worker = null;
 
@@ -42,20 +42,26 @@ function invertDataUrl(dataUrl) {
   });
 }
 
-chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-  if (msg.target !== 'offscreen' || msg.action !== 'ocr') return false;
+chrome.runtime.onMessage.addListener((msg) => {
+  if (msg.target !== 'offscreen' || msg.action !== 'ocr') return;
 
   (async () => {
     try {
       const w = await getWorker();
       const inv = await invertDataUrl(msg.dataUrl);
       const { data } = await w.recognize(inv);
-      sendResponse({ text: data.text.trim(), confidence: data.confidence });
+      chrome.runtime.sendMessage({
+        action: 'ocr_result',
+        id: msg.id,
+        result: { text: data.text.trim(), confidence: data.confidence },
+      });
     } catch (err) {
       console.error('[ocr_offscreen] error:', err);
-      sendResponse({ error: err.message });
+      chrome.runtime.sendMessage({
+        action: 'ocr_result',
+        id: msg.id,
+        result: { error: err.message },
+      });
     }
   })();
-
-  return true; // keep channel open for async sendResponse
 });

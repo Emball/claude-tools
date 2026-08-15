@@ -65,10 +65,28 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     (async () => {
       try {
         await ensureOffscreen();
-        const result = await chrome.runtime.sendMessage({
-          target: 'offscreen',
-          action: 'ocr',
-          dataUrl: request.dataUrl,
+        // Send to offscreen and wait for it to reply via a separate sendMessage back
+        const result = await new Promise((resolve, reject) => {
+          const id = Math.random().toString(36).slice(2);
+          const timer = setTimeout(() => {
+            chrome.runtime.onMessage.removeListener(listener);
+            reject(new Error('OCR timeout'));
+          }, 30000);
+          function listener(msg) {
+            if (msg.action === 'ocr_result' && msg.id === id) {
+              clearTimeout(timer);
+              chrome.runtime.onMessage.removeListener(listener);
+              resolve(msg.result);
+              return true;
+            }
+          }
+          chrome.runtime.onMessage.addListener(listener);
+          chrome.runtime.sendMessage({
+            target: 'offscreen',
+            action: 'ocr',
+            id,
+            dataUrl: request.dataUrl,
+          });
         });
         sendResponse(result);
       } catch (err) {

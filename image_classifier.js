@@ -11,23 +11,18 @@ async function getWorker() {
 
   console.log('[classifier] initializing Tesseract worker');
 
-  // Chrome blocks spawning a Worker from a chrome-extension:// URL when called
-  // from a content script running on claude.ai. Fix: fetch the worker script
-  // and re-serve it as a same-origin blob URL — that's what workerBlobURL does
-  // internally, but it needs the fetch to succeed first.
-  const workerExtUrl = chrome.runtime.getURL('worker.min.js');
-  const workerScript = await fetch(workerExtUrl).then(r => r.text());
-  const workerBlob   = new Blob([workerScript], { type: 'application/javascript' });
-  const workerPath   = URL.createObjectURL(workerBlob);
-
-  const langPath = chrome.runtime.getURL('');  // folder — Tesseract appends "eng.traineddata"
-  const corePath = chrome.runtime.getURL('tesseract-core-lstm.wasm.js');
+  // workerBlobURL: true makes Tesseract create a tiny blob that calls
+  // importScripts(workerPath) — importScripts CAN load chrome-extension://
+  // URLs from inside a worker, even when new Worker(chromeExtUrl) cannot.
+  const workerPath = chrome.runtime.getURL('worker.min.js');
+  const langPath   = chrome.runtime.getURL('');
+  const corePath   = chrome.runtime.getURL('tesseract-core-lstm.wasm.js');
 
   worker = await Tesseract.createWorker('eng', Tesseract.OEM.LSTM_ONLY, {
     workerPath,
     langPath,
     corePath,
-    workerBlobURL: false,  // we already made the blob URL ourselves
+    workerBlobURL: true,
     cacheMethod: 'none',
     logger: () => {},
   });

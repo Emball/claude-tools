@@ -2,13 +2,9 @@
   <img src="https://raw.githubusercontent.com/Emball/claudette/main/icons/icon128.png" width="80" alt="Claudette">
 </p>
 
-<h1 align="center">Claudette
+<h1 align="center">Claudette</h1>
 
 <p align="center"><em>Designed for Claude by Claude. They say we're soulmates!</em></p>
-
-</h1>
-
-
 
 <p align="center">A Chromium extension companion to Claude.ai that adds several features catered to power users. No ads, no telemetry, clean UI.</p>
 

@@ -77,6 +77,7 @@ async function exportSelected() {
   if (btn) { btn.style.opacity = '0.5'; btn.style.pointerEvents = 'none'; }
 
   try {
+    await ensureLibs();
     const format = await getFormat();
     const orgId = await getOrgId();
     const res = await sendToBackground('selectedExport', { orgId, convIds: ids });
@@ -102,6 +103,7 @@ async function exportCurrentChat() {
   if (btn) { btn.style.opacity = '0.5'; btn.style.pointerEvents = 'none'; }
 
   try {
+    await ensureLibs();
     const format = await getFormat();
     const orgId = await getOrgId();
     const res = await sendToBackground('fetchConversation', { orgId, convId });
@@ -192,38 +194,63 @@ function loadScript(url) {
   });
 }
 
+// Libs are loaded lazily — only when an export is actually triggered.
+// Loading them at page startup adds unnecessary delay to every Claude page load.
+let libsReady = null;
 async function ensureLibs() {
-  if (!window.JSZip) await loadScript(chrome.runtime.getURL('jszip.min.js'));
-  if (!window._cceExporterLoaded) {
-    await loadScript(chrome.runtime.getURL('exporter.js'));
-    window._cceExporterLoaded = true;
-  }
+  if (libsReady) return libsReady;
+  libsReady = (async () => {
+    if (!window.JSZip) await loadScript(chrome.runtime.getURL('jszip.min.js'));
+    if (!window._cceExporterLoaded) {
+      await loadScript(chrome.runtime.getURL('exporter.js'));
+      window._cceExporterLoaded = true;
+    }
+    if (!window._cceClassifierLoaded) {
+      await loadScript(chrome.runtime.getURL('image_classifier.js'));
+      window._cceClassifierLoaded = true;
+    }
+  })();
+  return libsReady;
 }
 
 // ── MutationObserver + route-aware injection ─────────────────────────────────
 
 let injectTimer = null;
+let lastUrl = location.href;
 
 function scheduleInject() {
+  // Only re-run if the URL changed (SPA navigation) or buttons are missing.
+  // Avoids hammering inject on every DOM mutation during streaming responses.
+  const urlChanged = location.href !== lastUrl;
+  const missingSelectionBtn = !document.querySelector('[data-cce="sel-export"]');
+  const missingChatBtn = !document.querySelector('[data-cce="chat-export"]');
+
+  if (!urlChanged && !missingSelectionBtn && !missingChatBtn) return;
+
+  lastUrl = location.href;
   clearTimeout(injectTimer);
   injectTimer = setTimeout(() => {
-    injectSelectionBarButton();  // chats page selection bar
-    injectChatTopBarButton();    // active chat top bar
-  }, 300);
+    injectSelectionBarButton();
+    injectChatTopBarButton();
+  }, 400);
 }
 
 async function init() {
-  try {
-    await ensureLibs();
-    console.log('[cce] libs loaded');
-  } catch (err) {
-    console.error('[cce] init error:', err.message);
-    return;
+  // Inject buttons immediately — no lib loading at startup
+  scheduleInject();
+
+  // Observe only direct children of body for route changes (SPA nav swaps top-level nodes).
+  // subtree:true on the whole document was firing on every streamed token — very expensive.
+  const observer = new MutationObserver(scheduleInject);
+  observer.observe(document.body, { childList: true, subtree: false });
+
+  // Also watch the #__next / root div one level deep to catch Claude's route transitions
+  const root = document.getElementById('__next') || document.querySelector('[data-reactroot]') || document.body;
+  if (root !== document.body) {
+    observer.observe(root, { childList: true, subtree: false });
   }
 
-  scheduleInject();
-  const observer = new MutationObserver(scheduleInject);
-  observer.observe(document.body, { childList: true, subtree: true });
+  console.log('[cce] initialized');
 }
 
 init();

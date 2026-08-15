@@ -8,7 +8,7 @@
     * { box-sizing: border-box; margin: 0; padding: 0; }
 
     body {
-      width: 220px;
+      width: 240px;
       background: #1a1a1a;
       color: #e8e8e8;
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
@@ -16,26 +16,43 @@
       padding: 12px;
     }
 
-    .title {
-      font-size: 11px;
+    .section-label {
+      font-size: 10px;
       font-weight: 600;
-      letter-spacing: 0.08em;
+      letter-spacing: 0.09em;
       text-transform: uppercase;
-      color: #8b8b8b;
-      margin-bottom: 12px;
+      color: #5a5a5a;
+      margin: 10px 0 6px;
     }
+    .section-label:first-child { margin-top: 0; }
 
     .row {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 6px 0;
+      padding: 5px 0;
+    }
+
+    .row.sub {
+      padding-left: 12px;
+      opacity: 1;
+      transition: opacity 0.15s;
+    }
+    .row.sub.disabled {
+      opacity: 0.3;
+      pointer-events: none;
     }
 
     .label {
       color: #c8c8c8;
+      font-size: 12px;
+    }
+    .row.sub .label {
+      color: #9a9a9a;
+      font-size: 11px;
     }
 
+    /* Pill toggle for format */
     .toggle-group {
       display: flex;
       background: #2a2a2a;
@@ -43,7 +60,6 @@
       padding: 2px;
       gap: 2px;
     }
-
     .toggle-group button {
       padding: 3px 10px;
       border: none;
@@ -51,39 +67,120 @@
       color: #8b8b8b;
       border-radius: 4px;
       cursor: pointer;
-      font-size: 12px;
+      font-size: 11px;
       font-weight: 500;
       transition: background 0.15s, color 0.15s;
     }
-
     .toggle-group button.active {
       background: #3a3a3a;
       color: #e8e8e8;
     }
 
+    /* On/off switch */
+    .switch {
+      position: relative;
+      width: 30px;
+      height: 16px;
+      flex-shrink: 0;
+    }
+    .switch input { display: none; }
+    .switch-track {
+      position: absolute;
+      inset: 0;
+      background: #2e2e2e;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .switch input:checked + .switch-track { background: #5a7a5a; }
+    .switch-thumb {
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 12px;
+      height: 12px;
+      background: #6a6a6a;
+      border-radius: 50%;
+      transition: transform 0.15s, background 0.15s;
+      pointer-events: none;
+    }
+    .switch input:checked ~ .switch-thumb {
+      transform: translateX(14px);
+      background: #a8c8a8;
+    }
+
     .divider {
       height: 1px;
-      background: #2a2a2a;
+      background: #242424;
       margin: 8px 0;
     }
 
     .status {
-      font-size: 11px;
-      color: #8b8b8b;
-      min-height: 16px;
+      font-size: 10px;
+      color: #5a5a5a;
+      min-height: 14px;
       text-align: right;
+      margin-top: 8px;
     }
   </style>
 </head>
 <body>
-  <div class="title">Export Settings</div>
 
+  <div class="section-label">Format</div>
   <div class="row">
-    <span class="label">Format</span>
+    <span class="label">Output type</span>
     <div class="toggle-group">
       <button id="btn-md" class="active">MD</button>
       <button id="btn-txt">TXT</button>
     </div>
+  </div>
+
+  <div class="divider"></div>
+  <div class="section-label">Content</div>
+
+  <div class="row">
+    <span class="label">Include thinking</span>
+    <label class="switch">
+      <input type="checkbox" id="tog-thinking">
+      <div class="switch-track"></div>
+      <div class="switch-thumb"></div>
+    </label>
+  </div>
+
+  <div class="row">
+    <span class="label">Include tool calls</span>
+    <label class="switch">
+      <input type="checkbox" id="tog-tools" checked>
+      <div class="switch-track"></div>
+      <div class="switch-thumb"></div>
+    </label>
+  </div>
+
+  <div class="row">
+    <span class="label">Include images</span>
+    <label class="switch">
+      <input type="checkbox" id="tog-images" checked>
+      <div class="switch-track"></div>
+      <div class="switch-thumb"></div>
+    </label>
+  </div>
+
+  <div class="row sub" id="sub-ocr">
+    <span class="label">Use OCR on screenshots</span>
+    <label class="switch">
+      <input type="checkbox" id="tog-ocr" checked>
+      <div class="switch-track"></div>
+      <div class="switch-thumb"></div>
+    </label>
+  </div>
+
+  <div class="row sub" id="sub-zip">
+    <span class="label">Package images in ZIP</span>
+    <label class="switch">
+      <input type="checkbox" id="tog-zip" checked>
+      <div class="switch-track"></div>
+      <div class="switch-thumb"></div>
+    </label>
   </div>
 
   <div class="divider"></div>

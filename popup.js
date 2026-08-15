@@ -1,36 +1,82 @@
-// popup.js — settings toggle logic
+// popup.js — settings logic
 
-const btnMd = document.getElementById('btn-md');
-const btnTxt = document.getElementById('btn-txt');
-const status = document.getElementById('status');
+const DEFAULTS = {
+  format:    'md',
+  thinking:  false,
+  tools:     true,
+  images:    true,
+  ocr:       true,
+  zip:       true,
+};
 
-function setActive(format) {
-  btnMd.classList.toggle('active', format === 'md');
-  btnTxt.classList.toggle('active', format === 'txt');
-}
+const btnMd      = document.getElementById('btn-md');
+const btnTxt     = document.getElementById('btn-txt');
+const togThink   = document.getElementById('tog-thinking');
+const togTools   = document.getElementById('tog-tools');
+const togImages  = document.getElementById('tog-images');
+const togOcr     = document.getElementById('tog-ocr');
+const togZip     = document.getElementById('tog-zip');
+const subOcr     = document.getElementById('sub-ocr');
+const subZip     = document.getElementById('sub-zip');
+const status     = document.getElementById('status');
 
 function flash(msg) {
   status.textContent = msg;
-  setTimeout(() => { status.textContent = ''; }, 1200);
+  setTimeout(() => { status.textContent = ''; }, 1000);
 }
 
-chrome.storage.sync.get({ format: 'md' }, ({ format }) => {
-  setActive(format);
-  console.log('[popup] loaded format:', format);
-});
+function updateSubRows(imagesOn) {
+  subOcr.classList.toggle('disabled', !imagesOn);
+  subZip.classList.toggle('disabled', !imagesOn);
+}
 
+function applySettings(s) {
+  btnMd.classList.toggle('active', s.format === 'md');
+  btnTxt.classList.toggle('active', s.format === 'txt');
+  togThink.checked  = s.thinking;
+  togTools.checked  = s.tools;
+  togImages.checked = s.images;
+  togOcr.checked    = s.ocr;
+  togZip.checked    = s.zip;
+  updateSubRows(s.images);
+  console.log('[popup] settings loaded:', s);
+}
+
+// Load saved settings
+chrome.storage.sync.get(DEFAULTS, applySettings);
+
+// Format pill
 btnMd.addEventListener('click', () => {
   chrome.storage.sync.set({ format: 'md' }, () => {
-    setActive('md');
+    btnMd.classList.add('active');
+    btnTxt.classList.remove('active');
     flash('Saved');
-    console.log('[popup] format set to md');
+    console.log('[popup] format → md');
+  });
+});
+btnTxt.addEventListener('click', () => {
+  chrome.storage.sync.set({ format: 'txt' }, () => {
+    btnTxt.classList.add('active');
+    btnMd.classList.remove('active');
+    flash('Saved');
+    console.log('[popup] format → txt');
   });
 });
 
-btnTxt.addEventListener('click', () => {
-  chrome.storage.sync.set({ format: 'txt' }, () => {
-    setActive('txt');
-    flash('Saved');
-    console.log('[popup] format set to txt');
+// Toggle switches — each saves its key immediately
+function makeToggle(el, key, onChange) {
+  el.addEventListener('change', () => {
+    const val = el.checked;
+    chrome.storage.sync.set({ [key]: val }, () => {
+      flash('Saved');
+      console.log(`[popup] ${key} → ${val}`);
+      if (onChange) onChange(val);
+    });
   });
-});
+}
+
+makeToggle(togThink,  'thinking');
+makeToggle(togTools,  'tools');
+makeToggle(togImages, 'images', updateSubRows);
+makeToggle(togOcr,    'ocr');
+makeToggle(togZip,    'zip');

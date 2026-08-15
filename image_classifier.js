@@ -1,17 +1,17 @@
 // image_classifier.js — content script
-// Three-tier image classification using a multi-signal fingerprint.
-// Tier 1: screenshot with extractable text → [screenshot: "text"]
-// Tier 2: screenshot with no extractable text → [screenshot: no extractable text]
-// Tier 3: photo → saved as image file in ZIP
+// Three-tier image classification with a parallel OCR worker pool.
+//
+// Tier 1: screenshot with extractable text  → [screenshot: "text"]
+// Tier 2: screenshot, no extractable text   → [screenshot: no extractable text]
+// Tier 3: photo / diagram                   → saved as image file in ZIP
 
-// --- Photo fingerprint signals ---
+// --- Photo fingerprint ---
 
-// Standard camera/sensor aspect ratios. Tolerance: ±1px on either dimension.
 const CAMERA_RATIOS = [
-  [4, 3], [3, 4],   // classic camera
-  [3, 2], [2, 3],   // 35mm film / DSLR
-  [16, 9], [9, 16], // widescreen / phone video
-  [1, 1],           // square (Instagram etc.)
+  [4, 3], [3, 4],
+  [3, 2], [2, 3],
+  [16, 9], [9, 16],
+  [1, 1],
   [5, 4], [4, 5],
   [5, 3], [3, 5],
   [7, 5], [5, 7],
@@ -20,82 +20,131 @@ const CAMERA_RATIOS = [
 
 function matchesCameraRatio(w, h) {
   for (const [rw, rh] of CAMERA_RATIOS) {
-    // Check if w/h == rw/rh within ±1px on either side
-    // w * rh == h * rw → cross multiply to avoid floats
     const diff = Math.abs(w * rh - h * rw);
-    // Allow ±1px: perturb each dimension by 1 and recheck
     if (diff === 0) return true;
-    if (Math.abs((w-1) * rh - h * rw) === 0) return true;
-    if (Math.abs((w+1) * rh - h * rw) === 0) return true;
-    if (Math.abs(w * rh - (h-1) * rw) === 0) return true;
-    if (Math.abs(w * rh - (h+1) * rw) === 0) return true;
+    if (Math.abs((w - 1) * rh - h * rw) === 0) return true;
+    if (Math.abs((w + 1) * rh - h * rw) === 0) return true;
+    if (Math.abs(w * rh - (h - 1) * rw) === 0) return true;
+    if (Math.abs(w * rh - (h + 1) * rw) === 0) return true;
   }
   return false;
 }
 
-// Score an image as photo (positive) or screenshot (negative).
-// Returns a score: >= 2 → photo (tier 3), < 2 → run OCR.
 function photoScore(width, height, fileSize, mimeType) {
   let score = 0;
   const mp = (width || 0) * (height || 0);
 
-  // Megapixels: real photos are 12MP+, screens cap at ~8MP (4K)
-  if (mp >= 12_000_000) score += 3;       // very strong photo signal
-  else if (mp >= 9_000_000) score += 2;   // strong photo signal
-  else if (mp < 4_000_000) score -= 1;    // screenshot signal (below 4K)
+  if      (mp >= 12_000_000) score += 3;
+  else if (mp >=  9_000_000) score += 2;
+  else if (mp <   4_000_000) score -= 1;
 
-  // Aspect ratio: must match a camera ratio at ±1px tolerance
   if (width && height && matchesCameraRatio(width, height)) score += 2;
-  else score -= 1; // arbitrary dims = screenshot signal
+  else score -= 1;
 
-  // File type: PNG = screenshot signal; JPEG = mild photo signal
-  if (mimeType === 'image/png') score -= 2;
+  if      (mimeType === 'image/png')                               score -= 2;
   else if (mimeType === 'image/jpeg' || mimeType === 'image/jpg') score += 1;
 
-  // File size: photos are large (>500KB raw), screenshots are small
-  if (fileSize >= 500_000) score += 1;
-  else if (fileSize < 100_000) score -= 1;
+  if      (fileSize >= 500_000) score += 1;
+  else if (fileSize < 100_000)  score -= 1;
 
   return score;
 }
 
-// --- OCR bridge ---
+// --- OCR worker pool ---
+// Multiple concurrent OCR jobs via the background iframe bridge.
+// Each job is a separate sendMessage call; background.js spawns one iframe per job.
+// Pool size matches background.js FETCH_CONCURRENCY (3) by default.
 
-async function ocrDataUrl(dataUrl) {
-  return new Promise((resolve, reject) => {
-    chrome.runtime.sendMessage({ action: 'ocr', dataUrl }, result => {
-      if (chrome.runtime.lastError) return reject(new Error(chrome.runtime.lastError.message));
-      if (!result) return reject(new Error('no response from background'));
-      if (result.error) return reject(new Error(result.error));
-      resolve(result);
-    });
-  });
+const OCR_POOL_SIZE = 3; // concurrent OCR jobs
+
+// Semaphore — limits parallel OCR calls so we don't spin up dozens of iframes at once
+class Semaphore {
+  constructor(n) {
+    this._slots = n;
+    this._queue = [];
+  }
+  acquire() {
+    if (this._slots > 0) {
+      this._slots--;
+      return Promise.resolve();
+    }
+    return new Promise(res => this._queue.push(res));
+  }
+  release() {
+    if (this._queue.length > 0) {
+      this._queue.shift()();
+    } else {
+      this._slots++;
+    }
+  }
 }
 
-// --- Main classifier ---
+const ocrSem = new Semaphore(OCR_POOL_SIZE);
 
-async function classifyFromUrl(url, width, height, index) {
+async function ocrDataUrl(dataUrl) {
+  await ocrSem.acquire();
+  try {
+    return await new Promise((resolve, reject) => {
+      chrome.runtime.sendMessage({ action: 'ocr', dataUrl }, result => {
+        if (chrome.runtime.lastError)
+          return reject(new Error(chrome.runtime.lastError.message));
+        if (!result)
+          return reject(new Error('no response from background'));
+        if (result.error)
+          return reject(new Error(result.error));
+        resolve(result);
+      });
+    });
+  } finally {
+    ocrSem.release();
+  }
+}
+
+// --- Classifier ---
+
+async function classifyFromUrl(url, width, height, index, settings) {
+  // If images are disabled entirely, skip
+  if (!settings.images) {
+    console.log(`[classifier] image ${index}: skipped (images disabled)`);
+    return { tier: 'skip' };
+  }
+
   let blob, mimeType, fileSize;
   try {
     const resp = await fetch(url, { credentials: 'include' });
-    if (!resp.ok) throw new Error(`fetch failed: ${resp.status}`);
-    blob = await resp.blob();
+    if (!resp.ok) throw new Error(`fetch ${resp.status}`);
+    blob     = await resp.blob();
     mimeType = blob.type;
     fileSize = blob.size;
   } catch (err) {
-    console.error('[classifier] fetch error:', err);
+    console.error(`[classifier] image ${index}: fetch error:`, err.message);
     return { tier: 2 };
   }
 
   const score = photoScore(width, height, fileSize, mimeType);
-  console.log(`[classifier] image ${index}: ${width}x${height}, ${(fileSize/1024).toFixed(0)}KB, ${mimeType}, score=${score}`);
+  console.log(
+    `[classifier] image ${index}: ${width}x${height}, ` +
+    `${(fileSize / 1024).toFixed(0)}KB, ${mimeType}, score=${score}`
+  );
 
+  // Photo — save as file regardless of ZIP setting
   if (score >= 2) {
-    console.log(`[classifier] image ${index}: classified as photo → tier 3`);
+    // If ZIP is off, we can't include the file — fall back to a placeholder
+    if (!settings.zip) {
+      console.log(`[classifier] image ${index}: photo, ZIP disabled → placeholder`);
+      return { tier: 'placeholder', label: 'photo' };
+    }
+    console.log(`[classifier] image ${index}: photo → tier 3`);
     return { tier: 3, blob };
   }
 
-  // Screenshot candidate → run OCR
+  // Screenshot candidate
+  if (!settings.ocr) {
+    // OCR disabled — drop straight to tier 2 without running Tesseract
+    console.log(`[classifier] image ${index}: screenshot, OCR disabled → tier 2`);
+    return { tier: 2 };
+  }
+
   const dataUrl = await new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload  = () => resolve(reader.result);
@@ -104,22 +153,46 @@ async function classifyFromUrl(url, width, height, index) {
   });
 
   try {
-    const result = await ocrDataUrl(dataUrl);
-    const { text, confidence } = result;
+    const { text, confidence } = await ocrDataUrl(dataUrl);
     console.log(`[classifier] image ${index}: OCR confidence=${confidence}, chars=${text.length}`);
     if (confidence >= 35 && text.length >= 20) return { tier: 1, text };
     return { tier: 2 };
   } catch (err) {
-    console.error(`[classifier] image ${index}: OCR error, saving as file:`, err.message);
-    return { tier: 3, blob };
+    console.error(`[classifier] image ${index}: OCR error → tier 3:`, err.message);
+    if (settings.zip) return { tier: 3, blob };
+    return { tier: 2 };
   }
 }
 
+// --- Public API ---
+
 const ImageClassifier = {
-  async classify(previewUrl, width, height, index) {
-    return await classifyFromUrl(previewUrl, width, height, index);
+  // Classify a single image. Settings object from chrome.storage.sync.
+  async classify(previewUrl, width, height, index, settings = {}) {
+    const s = {
+      images: settings.images ?? true,
+      ocr:    settings.ocr   ?? true,
+      zip:    settings.zip   ?? true,
+    };
+    return classifyFromUrl(previewUrl, width, height, index, s);
   },
+
+  // Classify many images in parallel (up to OCR_POOL_SIZE concurrent OCR jobs).
+  async classifyAll(imageList, settings = {}) {
+    const s = {
+      images: settings.images ?? true,
+      ocr:    settings.ocr   ?? true,
+      zip:    settings.zip   ?? true,
+    };
+    console.log(`[classifier] classifyAll: ${imageList.length} images, pool=${OCR_POOL_SIZE}`);
+    return Promise.all(
+      imageList.map(({ url, width, height, index }) =>
+        classifyFromUrl(url, width, height, index, s)
+      )
+    );
+  },
+
   async terminate() {
-    console.log('[classifier] terminate');
+    console.log('[classifier] pool terminated');
   },
 };

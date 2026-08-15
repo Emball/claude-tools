@@ -218,6 +218,7 @@ async function messageToText(msg, images, nonImageFiles, settings) {
   // All file attachments — both msg.attachments[] and msg.files[] can contain images or text
   const fileParts = [];
   const allFiles = [...(msg.attachments || []), ...(msg.files || [])];
+  console.log(`[exporter][debug] msg ${msg.uuid} allFiles count:`, allFiles.length, allFiles.map(f => ({kind: f.file_kind, name: f.file_name, success: f.success})));
   for (const file of allFiles) {
     if (file.success === false) continue;
     const name = file.file_name || file.name || 'file';

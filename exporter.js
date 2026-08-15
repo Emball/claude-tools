@@ -238,15 +238,18 @@ async function messageToText(msg, images, nonImageFiles, settings) {
       if (rendered) fileParts.push(rendered);
     } else {
       const content = file.extracted_content || file.text || file.content || '';
-      const lang    = inferLang(name, content);
-      const comment = rawName ? (lang === 'python' ? `# ${name}` : `// ${name}`) : null;
-      const label   = rawName ? `*<File: ${name}>*` : `*<File: untitled>*`;
-      if (content) {
-        const block = comment ? `${label}\n\`\`\`${lang}\n${comment}\n${content.trim()}\n\`\`\`` : `${label}\n\`\`\`${lang}\n${content.trim()}\n\`\`\``;
-        fileParts.push(block);
-        if (settings.zipFiles) nonImageFiles.push({ filename: name, content: content.trim() });
+      if (!content.trim()) continue; // skip empty files entirely
+
+      const hasExt = rawName && rawName.includes('.');
+      const lang   = inferLang(name, content);
+
+      if (!hasExt) {
+        // No real filename/extension — render inline without label or zip entry
+        fileParts.push(`\`\`\`${lang}\n${content.trim()}\n\`\`\``);
       } else {
-        fileParts.push(`${label}\n\`\`\`\n(binary file)\n\`\`\``);
+        const comment = lang === 'python' ? `# ${name}` : `// ${name}`;
+        fileParts.push(`*<File: ${name}>*\n\`\`\`${lang}\n${comment}\n${content.trim()}\n\`\`\``);
+        if (settings.zipFiles) nonImageFiles.push({ filename: name, content: content.trim() });
       }
     }
   }

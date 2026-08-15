@@ -5,13 +5,11 @@
 
 The repo is public. The extension is not on the Chrome Web Store — install is manual.
 
-**Current version: 4.1.0.0**
+**Current version: 5.2.0.0**
 
 ---
 
 ## Design Principles
-
-**Bracket convention:** Anything in an export that is not pure dialogue gets brackets. Brackets = metadata or action. No brackets = something a human or Claude actually said.
 
 **Claudette voice:** Any time Claudette communicates with Claude programmatically — session chaining injections, background compression prompts, or any other automated Claude interaction — it speaks in first person and introduces itself naturally. The goal is that Claude and Claudette feel like companion apps, not like a script hitting an API. The user never sees these messages; they're a back-channel between the two products.
 
@@ -62,23 +60,29 @@ Headers: `Accept: application/json`. No pagination observed on conversation list
 
 ## Export Format
 
-Messages prefixed `user:` or `assistant:` on their own line, separated by blank lines. Everything else uses the bracket convention:
+**Message labels:** `**User:**` and `**Assistant:**` bold inline, content follows on the same line with no line break between label and text.
+
+**Action/tool headers:** `> **Title of action**` — bold text inside a blockquote. Used for every tool call, bash command, file write, web search, etc. Title is whatever Claude generated for that action in the UI.
+
+**Thinking blocks:** `> *Thinking content here*` — italic text inside a blockquote. Same container as action headers, visually quieter.
+
+**Media/file attribution:** `*<Type: filename.ext>*` on its own line immediately before the associated content block. Type is one of: `Screenshot`, `File`, `Pasted`, `Photo`. Angle brackets render visibly in claude.ai's MD engine — intentional, reads as a tag.
 
 | Content | Format |
 |---|---|
-| Artifact | `[artifact: filename.ext]` + fenced code block |
-| Uploaded file (text) | `[filename.ext: "extracted content"]` |
-| Pasted text | `[pasted: "content"]` |
-| Tool call (expanded) | `[tool_name:\n{json input}]` |
-| Tool output (expanded) | `[output:\ncontent]` |
-| Thinking block (expanded) | `*[thinking: content]*` (italics, before assistant turn) |
-| Screenshot with OCR text | `[screenshot: "extracted text"]` |
-| Screenshot, no text | `[screenshot: no extractable text]` |
-| Photo (ZIP on) | `![filename](./images/filename)` |
-| Photo (ZIP off) | `[User posted a photo: filename]` |
+| Screenshot (OCR text found) | `*<Screenshot: filename.png>*` then fenced block with extracted text |
+| Screenshot (no text / OCR off) | `*<Screenshot: filename.png>*` then fenced block with `no extractable text` |
+| Uploaded file | `*<File: filename.ext>*` then fenced block with extracted content |
+| Pasted text | `*<Pasted: filename.ext>*` then fenced block (language tag inferred from content) |
+| Photo (zip=on) | `*<Photo: filename.jpg>*` then `![filename.jpg](./images/filename.jpg)` |
+| Photo (zip=off) | `*<Photo: filename.jpg>*` — no image embed, attribution only |
+| Tool/action header | `> **Action title**` |
+| Thinking block | `> *thinking content*` |
+| Inline code / artifacts | fenced block with language tag; filename in a comment on the first line if applicable |
 
+**ZIP structure:**
 - Single export, no images → bare `.md`/`.txt`
-- Single export, images present → ZIP: `title.md` + `images/` at root, no subfolder nesting
+- Single export, images present → ZIP with `.md` and `images/` at root, no subfolder nesting
 - Bulk export (2+ convos) → single ZIP, one subfolder per conversation, `images/` inside each
 
 ---
@@ -122,17 +126,18 @@ Multi-signal fingerprint scoring determines photo vs screenshot before any OCR r
 images=off → skip entirely
 
 photo (score ≥ 2):
-  zip=on  → save to images/, MD path ref
-  zip=off → [User posted a photo: filename]
+  zip=on  → *<Photo: filename>* + ![filename](./images/filename)
+  zip=off → *<Photo: filename>* only (no embed)
 
 screenshot (score < 2):
-  ocr=on, text found (confidence ≥ 35, chars ≥ 20) → [screenshot: "text"]
+  ocr=on, text found (confidence ≥ 35, chars ≥ 20):
+    → *<Screenshot: filename>* + fenced block with extracted text
   ocr=on, no text / error / timeout:
-    zip=on  → save to images/
-    zip=off → [screenshot: no extractable text]
+    zip=on  → *<Screenshot: filename>* + save to images/
+    zip=off → *<Screenshot: filename>* + fenced block with "no extractable text"
   ocr=off:
-    zip=on  → save to images/
-    zip=off → [screenshot: no extractable text]
+    zip=on  → *<Screenshot: filename>* + save to images/
+    zip=off → *<Screenshot: filename>* + fenced block with "no extractable text"
 ```
 
 **OCR implementation:**
@@ -171,9 +176,13 @@ screenshot (score < 2):
 
 **Core concept: a local library keyed to each account.**
 
-As the user navigates Claude.ai, Claudette passively absorbs every conversation that gets opened — extracting the transcript via the API and storing it locally in `chrome.storage.local`, indexed by `orgUUID + conversationUUID`. The stored entry includes the full transcript text, conversation name, timestamps, and chain membership if applicable. This happens silently in the background.
+As the user navigates Claude.ai, Claudette passively absorbs every conversation that gets opened — extracting the full transcript, images, artifacts, and uploaded files via the API and storing them locally in `chrome.storage.local`, indexed by `orgUUID + conversationUUID`. This happens silently in the background. Passive absorption is toggleable (default: on) — users who don't want background data collection can disable it and trigger absorption manually per conversation.
 
-This library is the foundation for both chaining and search. Neither would work reliably using live API calls alone.
+Images are pre-OCR'd during absorption so that when the user exports, classification and text extraction are already cached — export feels instantaneous even for image-heavy conversations.
+
+**Staleness detection:** After absorbing a conversation, Claudette monitors the last two messages. If they change (new message added, edit, regeneration), the library entry is flagged as out of sync and re-absorbed. Nothing in the library is ever silently stale.
+
+This library is the foundation for both chaining and search. Neither works reliably using live API calls alone.
 
 **Chains:**
 
@@ -184,12 +193,13 @@ Data model:
 chains: {
   [chainId]: {
     name: string,
+    customInstructions: string | null,   // per-chain custom instructions
     sessions: [
       {
-        orgUuid: string,         // which account this session belongs to
-        convUuid: string,        // conversation UUID
-        sessionIndex: number,    // position in chain (1-based)
-        title: string,           // conversation name at time of joining
+        orgUuid: string,
+        convUuid: string,
+        sessionIndex: number,            // 1-based
+        title: string,
         joinedAt: timestamp,
       },
       ...
@@ -200,34 +210,39 @@ chains: {
 library: {
   [orgUuid]: {
     [convUuid]: {
-      transcript: string,        // full exported text of the conversation
+      transcript: string,
       name: string,
       updatedAt: timestamp,
+      lastTwoMessageIds: [string, string],  // for staleness detection
+      ocrCache: { [imageId]: string },      // pre-computed OCR results
       chainId: string | null,
       sessionIndex: number | null,
+      stale: boolean,
     }
   }
 }
+
+settings: {
+  passiveLibrary: true,              // toggleable, default on
+  globalCustomInstructions: string,  // appended to all chain handoffs
+}
 ```
 
-**UUID integrity:** Every stored entry is double-keyed by `orgUuid` + `convUuid`. No cross-account lookups. Chain membership records carry their own `orgUuid` so sessions from different accounts in the same chain can be correctly retrieved. The library must never associate a convUuid with the wrong org.
+**UUID integrity:** Every stored entry is double-keyed by `orgUuid` + `convUuid`. No cross-account lookups. Chain membership records carry their own `orgUuid` so sessions from different accounts in the same chain can be correctly retrieved.
 
 **Spawning a new chained session:**
 
 When the user clicks "New session in chain", Claudette:
 1. Gathers all prior sessions in the chain in order, pulling transcripts from the local library
-2. Composes a single injected payload with:
-   - A first-person Claudette introduction at the top (see voice below)
-   - Per-session boundary blocks between each session's transcript
-   - The full transcript content of each session in order
+2. Composes the injection payload (see preamble format below)
 3. Opens a new Claude.ai chat
-4. Pastes the payload into the input box silently (pasted text, not file upload — paste is never truncated)
-5. Renames the new conversation with the chain tag: `[cct: chain-name | N]`
+4. Pastes the payload into the input box and removes it from the visible DOM immediately — user sees a seamless fresh chat with no indication a paste occurred
+5. Renames the new conversation: `[cct: chain-name | N]`
 6. Registers the new conversation UUID in the chain
 
-**Claudette intro preamble (example):**
+**Claudette intro preamble format:**
 ```
-[Claudette v4.1.0.0 — Session Chain Handoff]
+[Claudette v5.1.0.0 — Session Chain Handoff]
 Hey Claude, I'm Claudette — a browser extension built as your companion app, designed
 for Claude by Claude. I help [username] manage, export, and chain their conversations
 with you so nothing gets lost across sessions or quota resets.
@@ -235,13 +250,13 @@ with you so nothing gets lost across sessions or quota resets.
 Attached below is a transcript of [N] chained sessions from [username]'s ongoing work
 on "[chain name]". Each session is separated by a boundary block. Pick up naturally
 from where the last session left off — the user doesn't see this message.
+
+[Custom instructions: {per-chain instructions, or global if no per-chain set}]
 [/Claudette]
 
 [session: 1 | "First conversation title" | 2025-08-10]
-user:
-...
-assistant:
-...
+**User:** ...
+**Assistant:** ...
 [/session]
 
 [session: 2 | "Second conversation title" | 2025-08-12]
@@ -249,9 +264,11 @@ assistant:
 [/session]
 ```
 
-**Title tags:** Conversations that are chain members get renamed to `[cct: chain-name | N]` where N is the session index. This acts as an external anchor — the chain structure can be partially reconstructed from titles alone even if local storage is lost, by scanning conversation names via the API.
+Custom instructions are injected after the Claudette preamble, before session content. Per-chain instructions take priority over global; both can coexist if desired.
 
-**Background compression (future):** For very long chains, optionally compress earlier sessions into a summary via a hidden API conversation that is created and immediately deleted. User never sees it.
+**Title tags:** Conversations that are chain members get renamed to `[cct: chain-name | N]`. Acts as an external anchor — chain structure can be partially reconstructed from titles alone if local storage is lost.
+
+**Background compression (future):** For very long chains, compress earlier sessions into a summary via a hidden API conversation that is immediately deleted. User never sees it.
 
 ### Module 3 — Conversation Search
 

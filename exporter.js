@@ -105,7 +105,7 @@ async function classifyAndRouteFile(file, images, settings, imageIndex, imageTot
     const iname = file.file_name || `image_${images.length + 1}.${ext}`;
     images.push({ filename: iname, blob: result.blob });
     const isPhoto = result.isPhoto;
-    return `*<${isPhoto ? 'Photo' : 'Screenshot'}: ${iname}>*\n![${iname}](./images/${iname})`;
+    return `*<${isPhoto ? 'Photo' : 'Screenshot'}: ${iname}>*\n![${iname}](./${iname})`;
   }
 
   return `*<Screenshot: ${fname}>*\n\`\`\`\nfetch failed\n\`\`\``;
@@ -288,9 +288,9 @@ function buildZip(title, text, ext, images, nonImageFiles, settings) {
   const zip = new JSZip();
   zip.file(`${title}.${ext}`, text);
   if (settings.zip && images.length > 0)
-    images.forEach(img => zip.folder('images').file(img.filename, img.blob));
+    images.forEach(img => zip.file(img.filename, img.blob));
   if (settings.zipFiles && nonImageFiles.length > 0)
-    nonImageFiles.forEach(f => zip.folder('files').file(f.filename, f.content));
+    nonImageFiles.forEach(f => zip.file(f.filename, f.content));
   return zip;
 }
 
@@ -349,13 +349,19 @@ async function exportBulk(results, settingsOverride) {
     }
     const conv   = result.data;
     const title  = sanitizeFilename(conv.name || conv.uuid);
-    const folder = zip.folder(title);
-    const { text, images, nonImageFiles } = await conversationToText(conv, settings);
-    folder.file(`${title}.${ext}`, text);
+    let { text, images, nonImageFiles } = await conversationToText(conv, settings);
+    // Prefix image/file names with conv title to avoid collisions in flat ZIP root
+    images = images.map(img => {
+      const prefixed = `${title}_${img.filename}`;
+      text = text.replaceAll(`./${img.filename}`, `./${prefixed}`);
+      return { ...img, filename: prefixed };
+    });
+    nonImageFiles = nonImageFiles.map(f => ({ ...f, filename: `${title}_${f.filename}` }));
+    zip.file(`${title}.${ext}`, text);
     if (settings.zip && images.length > 0)
-      images.forEach(img => folder.folder('images').file(img.filename, img.blob));
+      images.forEach(img => zip.file(img.filename, img.blob));
     if (settings.zipFiles && nonImageFiles.length > 0)
-      nonImageFiles.forEach(f => folder.folder('files').file(f.filename, f.content));
+      nonImageFiles.forEach(f => zip.file(f.filename, f.content));
     ok++;
   }
 

@@ -1,7 +1,7 @@
 // image_classifier.js — content script
-// Routes OCR requests through background.js → chrome.offscreen document.
-// The offscreen document runs Tesseract WASM in a pure extension context,
-// completely isolated from claude.ai's CSP.
+// Routes OCR requests through background.js → ocr_engine.html (extension context).
+// All images go through OCR. Tier 1 = text extracted, Tier 2 = no text found,
+// Tier 3 = saved as image file (only on OCR error/timeout fallback).
 
 async function ocrDataUrl(dataUrl) {
   return new Promise((resolve, reject) => {
@@ -14,19 +14,6 @@ async function ocrDataUrl(dataUrl) {
   });
 }
 
-const PHOTO_RATIOS = [
-  4/3, 3/4, 3/2, 2/3, 16/9, 9/16, 1/1,
-  5/4, 4/5, 5/3, 3/5, 7/5, 5/7, 16/10, 10/16,
-];
-const RATIO_TOLERANCE = 0.02;
-
-function looksLikePhoto(width, height) {
-  if (!width || !height) return false;
-  if (height > width) return true; // portrait = almost certainly a photo on desktop
-  const ratio = width / height;
-  return PHOTO_RATIOS.some(r => Math.abs(ratio - r) <= RATIO_TOLERANCE);
-}
-
 async function classifyFromUrl(url, width, height, index) {
   let blob;
   try {
@@ -35,12 +22,7 @@ async function classifyFromUrl(url, width, height, index) {
     blob = await resp.blob();
   } catch (err) {
     console.error('[classifier] fetch error:', err);
-    return { tier: 3, blob: null };
-  }
-
-  if (looksLikePhoto(width, height)) {
-    console.log(`[classifier] image ${index}: photo (${width}x${height}) → tier 3`);
-    return { tier: 3, blob };
+    return { tier: 2 };
   }
 
   const dataUrl = await new Promise((resolve, reject) => {
@@ -54,11 +36,12 @@ async function classifyFromUrl(url, width, height, index) {
     const result = await ocrDataUrl(dataUrl);
     const { text, confidence } = result;
     console.log(`[classifier] image ${index}: confidence=${confidence}, chars=${text.length}, dims=${width}x${height}`);
-    if (confidence >= 60 && text.length >= 10) return { tier: 1, text };
+    if (confidence >= 35 && text.length >= 20) return { tier: 1, text };
     return { tier: 2 };
   } catch (err) {
-    console.error('[classifier] OCR error, falling back to tier 2:', err);
-    return { tier: 2 };
+    // OCR failed — save as image file so data isn't lost
+    console.error(`[classifier] image ${index}: OCR error, saving as file:`, err.message);
+    return { tier: 3, blob };
   }
 }
 
@@ -67,6 +50,6 @@ const ImageClassifier = {
     return await classifyFromUrl(previewUrl, width, height, index);
   },
   async terminate() {
-    console.log('[classifier] terminate (offscreen managed by background)');
+    console.log('[classifier] terminate');
   },
 };

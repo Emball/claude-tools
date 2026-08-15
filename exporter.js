@@ -224,8 +224,16 @@ async function messageToText(msg, images, nonImageFiles, settings) {
     const name = file.file_name || file.name || 'file';
 
     if (file.file_kind === 'image') {
+      console.log(`[exporter][debug] image file hit, settings.images=${settings.images}, name=${name}`);
       if (!settings.images) continue;
-      const rendered = await classifyAndRouteFile(file, images, settings);
+      let rendered;
+      try {
+        rendered = await classifyAndRouteFile(file, images, settings);
+      } catch(e) {
+        console.error('[exporter][debug] classifyAndRouteFile threw:', e);
+        rendered = '';
+      }
+      console.log(`[exporter][debug] rendered result:`, rendered?.slice?.(0,80));
       if (rendered) fileParts.push(rendered);
     } else {
       const content = file.extracted_content || file.text || file.content || '';

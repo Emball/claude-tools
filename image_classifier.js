@@ -1,13 +1,53 @@
 // image_classifier.js — scores images and routes to correct export tier
 // Tier 1: screenshot with text  → [screenshot: "extracted text"]
 // Tier 2: screenshot, no text  → [screenshot: no extractable text]
-// Tier 3: photo / large file   → saved to images/, triggers ZIP
+// Tier 3: photo                → saved to images/, triggers ZIP
 
 const ImageClassifier = (() => {
   let tesseractWorker = null;
   let workerReady = false;
   let workerLoading = false;
   let workerQueue = [];
+
+  // Pre-seed IndexedDB with eng.traineddata from extension bundle so the
+  // Tesseract web worker can read it from cache without hitting chrome-extension:// URLs
+  async function seedTrainedData() {
+    const STORE = 'tesseract-cache';
+    const KEY = './eng.traineddata';
+
+    const db = await new Promise((res, rej) => {
+      const req = indexedDB.open(STORE, 1);
+      req.onupgradeneeded = e => e.target.result.createObjectStore(STORE);
+      req.onsuccess = e => res(e.target.result);
+      req.onerror = rej;
+    });
+
+    // Check if already cached
+    const existing = await new Promise((res, rej) => {
+      const tx = db.transaction(STORE, 'readonly');
+      const req = tx.objectStore(STORE).get(KEY);
+      req.onsuccess = e => res(e.target.result);
+      req.onerror = rej;
+    });
+    if (existing) {
+      console.log('[classifier] eng.traineddata already in IndexedDB cache');
+      return;
+    }
+
+    console.log('[classifier] seeding eng.traineddata into IndexedDB...');
+    const url = chrome.runtime.getURL('eng.traineddata');
+    const resp = await fetch(url);
+    const buf = await resp.arrayBuffer();
+    const data = new Uint8Array(buf);
+
+    await new Promise((res, rej) => {
+      const tx = db.transaction(STORE, 'readwrite');
+      const req = tx.objectStore(STORE).put(data, KEY);
+      req.onsuccess = res;
+      req.onerror = rej;
+    });
+    console.log('[classifier] eng.traineddata seeded successfully');
+  }
 
   async function getWorker() {
     if (workerReady) return tesseractWorker;
@@ -16,17 +56,17 @@ const ImageClassifier = (() => {
     workerLoading = true;
     console.log('[classifier] loading Tesseract worker');
     try {
-      const workerUrl = typeof chrome !== 'undefined' && chrome.runtime
-        ? chrome.runtime.getURL('worker.min.js')
-        : 'worker.min.js';
-      const langPath = typeof chrome !== 'undefined' && chrome.runtime
-        ? chrome.runtime.getURL('')
-        : './';
+      await seedTrainedData();
+
+      const workerUrl = chrome.runtime.getURL('worker.min.js');
       const worker = await Tesseract.createWorker('eng', 1, {
         workerPath: workerUrl,
-        langPath: langPath,
+        cachePath: '.',       // matches the KEY prefix in IndexedDB
+        cacheMethod: 'read',  // read-only: use cache, don't try to write or re-fetch
+        gzip: false,
         logger: () => {},
       });
+
       tesseractWorker = worker;
       workerReady = true;
       workerQueue.forEach(({ res }) => res(worker));
@@ -54,7 +94,6 @@ const ImageClassifier = (() => {
     return score;
   }
 
-  // Fetch as blob → object URL → canvas (avoids CORS taint on getImageData)
   async function fetchToCanvas(url) {
     const resp = await fetch(url, { credentials: 'include' });
     if (!resp.ok) throw new Error(`fetch ${resp.status}`);
@@ -66,17 +105,7 @@ const ImageClassifier = (() => {
         const canvas = document.createElement('canvas');
         canvas.width = img.width;
         canvas.height = img.height;
-        const ctx = canvas.getContext('2d');
-        ctx.drawImage(img, 0, 0);
-        // Invert colors for better OCR on dark-background UIs
-        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        const d = imageData.data;
-        for (let i = 0; i < d.length; i += 4) {
-          d[i]     = 255 - d[i];
-          d[i + 1] = 255 - d[i + 1];
-          d[i + 2] = 255 - d[i + 2];
-        }
-        ctx.putImageData(imageData, 0, 0);
+        canvas.getContext('2d').drawImage(img, 0, 0);
         URL.revokeObjectURL(objUrl);
         resolve({ canvas, blob });
       };

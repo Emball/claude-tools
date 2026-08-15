@@ -1,43 +1,7 @@
 // content.js — injects export buttons into claude.ai
 
-// ── Animated fill icon ────────────────────────────────────────────────────────
-// Two-layer SVG: grey outline on top, white fill clipped by a rising rect.
-// Fill level is driven by setting --cce-fill on the SVG element (0–1).
-
-function makeFillIcon(id) {
-  const uid = id || ('cce_' + Math.random().toString(36).slice(2));
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24"
-      class="cce-icon" data-uid="${uid}" style="overflow:visible">
-    <defs>
-      <clipPath id="cp_${uid}">
-        <!-- rect grows from bottom; y starts at 24 (empty) and shrinks toward 0 (full) -->
-        <rect x="0" y="24" width="24" height="24" class="cce-fill-rect"/>
-      </clipPath>
-    </defs>
-    <!-- filled layer, clipped -->
-    <g clip-path="url(#cp_${uid})" fill="currentColor" opacity="0.9">
-      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-      <polyline points="7 10 12 15 17 10"/>
-      <line x1="12" y1="15" x2="12" y2="3"/>
-    </g>
-    <!-- outline layer always on top -->
-    <g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-      <polyline points="7 10 12 15 17 10"/>
-      <line x1="12" y1="15" x2="12" y2="3"/>
-    </g>
-  </svg>`;
-}
-
-// Update the fill level (0–1) on all cce-icons inside a container
-function setIconFill(container, pct) {
-  if (!container) return;
-  container.querySelectorAll('.cce-fill-rect').forEach(rect => {
-    const y = 24 - (pct * 24);
-    rect.setAttribute('y', y);
-    rect.setAttribute('height', 24 - y);
-  });
-}
+// no-op — no custom icon, buttons use plain text matching Share button style
+function setIconFill() {}
 
 // ── CSS injected once ────────────────────────────────────────────────────────
 
@@ -46,8 +10,6 @@ function injectStyles() {
   const s = document.createElement('style');
   s.id = 'cce-styles';
   s.textContent = `
-    .cce-fill-rect { transition: y 0.3s ease, height 0.3s ease; }
-
     .cce-progress-bar-wrap {
       position: absolute;
       left: 50%;
@@ -324,7 +286,7 @@ function injectSelectionBarButton() {
   btn.setAttribute('data-cce', 'sel-export');
   btn.setAttribute('title', 'Export selected chats');
   btn.setAttribute('data-cds', 'Button');
-  btn.innerHTML = `<span class="inline-flex min-w-0 items-center gap-1">${makeFillIcon('sel')}<span>Export</span></span>`;
+  btn.innerHTML = `<span class="inline-flex min-w-0 items-center gap-1 ">Export</span>`;
   btn.className = cancelBtn.className;
   btn.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); exportSelected(); });
   buttonRow.insertBefore(btn, cancelBtn);
@@ -344,7 +306,7 @@ function injectChatTopBarButton() {
   btn.setAttribute('data-cce', 'chat-export');
   btn.setAttribute('title', 'Export this chat');
   btn.className = shareBtn.className;
-  btn.innerHTML = makeFillIcon('chat');
+  btn.innerHTML = `<span class="inline-flex min-w-0 items-center gap-1 ">Export</span>`;
   btn.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); exportCurrentChat(); });
   shareBtn.parentElement.insertBefore(btn, shareBtn);
   console.log('[cce] chat top bar export button injected');
@@ -401,9 +363,9 @@ async function init() {
   injectStyles();
   scheduleInject();
   const observer = new MutationObserver(scheduleInject);
-  observer.observe(document.body, { childList: true, subtree: false });
+  observer.observe(document.body, { childList: true, subtree: true });
   const root = document.getElementById('__next') || document.querySelector('[data-reactroot]') || document.body;
-  if (root !== document.body) observer.observe(root, { childList: true, subtree: false });
+  // subtree:true on body covers everything — no need for a second observer
   console.log('[cce] initialized');
 }
 

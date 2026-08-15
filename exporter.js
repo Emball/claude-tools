@@ -58,10 +58,9 @@ function inferLang(filename, content) {
 // --- Image routing ---
 
 async function classifyAndRouteFile(file, images, settings) {
-  const previewUrl = file.preview_url
-    ? (file.preview_url.startsWith('http')
-        ? file.preview_url
-        : `https://claude.ai${file.preview_url}`)
+  const rawUrl = file.preview_asset?.url || file.preview_url || null;
+  const previewUrl = rawUrl
+    ? (rawUrl.startsWith('http') ? rawUrl : `https://claude.ai${rawUrl}`)
     : null;
 
   const fname = file.file_name || 'image';
@@ -216,48 +215,31 @@ async function messageToText(msg, images, nonImageFiles, settings) {
     body = msg.text;
   }
 
-  // Attachments at msg.attachments[]
-  const attachmentParts = [];
-  if (Array.isArray(msg.attachments)) {
-    for (const att of msg.attachments) {
-      const name    = att.file_name || att.name || 'file';
-      const content = att.extracted_content || att.text || att.content || '';
+  // All file attachments — both msg.attachments[] and msg.files[] can contain images or text
+  const fileParts = [];
+  const allFiles = [...(msg.attachments || []), ...(msg.files || [])];
+  for (const file of allFiles) {
+    if (file.success === false) continue;
+    const name = file.file_name || file.name || 'file';
+
+    if (file.file_kind === 'image') {
+      if (!settings.images) continue;
+      const rendered = await classifyAndRouteFile(file, images, settings);
+      if (rendered) fileParts.push(rendered);
+    } else {
+      const content = file.extracted_content || file.text || file.content || '';
       const lang    = inferLang(name, content);
       const comment = lang === 'python' ? `# ${name}` : `// ${name}`;
       if (content) {
-        attachmentParts.push(`*<File: ${name}>*\n\`\`\`${lang}\n${comment}\n${content.trim()}\n\`\`\``);
+        fileParts.push(`*<File: ${name}>*\n\`\`\`${lang}\n${comment}\n${content.trim()}\n\`\`\``);
         if (settings.zipFiles) nonImageFiles.push({ filename: name, content: content.trim() });
       } else {
-        attachmentParts.push(`*<File: ${name}>*\n\`\`\`\n(binary file)\n\`\`\``);
+        fileParts.push(`*<File: ${name}>*\n\`\`\`\n(binary file)\n\`\`\``);
       }
     }
   }
 
-  // Images at msg.files[]
-  const fileParts = [];
-  if (Array.isArray(msg.files)) {
-    for (const file of msg.files) {
-      if (!file.success) continue;
-      if (file.file_kind === 'image') {
-        if (!settings.images) continue;
-        const rendered = await classifyAndRouteFile(file, images, settings);
-        if (rendered) fileParts.push(rendered);
-      } else {
-        const name    = file.file_name || 'file';
-        const content = file.extracted_content || '';
-        const lang    = inferLang(name, content);
-        const comment = lang === 'python' ? `# ${name}` : `// ${name}`;
-        if (content) {
-          fileParts.push(`*<File: ${name}>*\n\`\`\`${lang}\n${comment}\n${content.trim()}\n\`\`\``);
-          if (settings.zipFiles) nonImageFiles.push({ filename: name, content: content.trim() });
-        } else {
-          fileParts.push(`*<File: ${name}>*\n\`\`\`\n(binary file)\n\`\`\``);
-        }
-      }
-    }
-  }
-
-  const allParts = [body.trim(), ...attachmentParts, ...fileParts].filter(Boolean);
+  const allParts = [body.trim(), ...fileParts].filter(Boolean);
   return `${role} ${allParts.join('\n\n')}`;
 }
 

@@ -38,6 +38,7 @@ function injectPageScript() {
       page.dataset.workerPath = chrome.runtime.getURL('worker.min.js');
       page.dataset.corePath   = chrome.runtime.getURL('');
       page.dataset.langPath   = chrome.runtime.getURL('');
+      page.dataset.tdUrl      = chrome.runtime.getURL('eng.traineddata');
       page.onerror = reject;
       (document.head || document.documentElement).appendChild(page);
     };

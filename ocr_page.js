@@ -1,18 +1,27 @@
 // ocr_page.js — runs in PAGE context (injected via <script src>)
-// Initializes Tesseract worker and handles OCR requests from content script via postMessage.
+// Pre-fetches eng.traineddata from extension URL (page context can do this),
+// writes it into the worker FS directly, bypassing the worker's own fetch.
 
 (async function () {
   let _worker = null;
 
   async function getWorker() {
     if (_worker) return _worker;
-    // These URLs are baked in at inject time via data attributes on the script tag
+
     const script = document.getElementById('cce-ocr-page');
     const workerPath = script.dataset.workerPath;
     const corePath   = script.dataset.corePath;
     const langPath   = script.dataset.langPath;
+    const tdUrl      = script.dataset.tdUrl; // full URL to eng.traineddata
 
-    _worker = await Tesseract.createWorker('eng', 1, {
+    // Pre-fetch traineddata in page context (page can fetch chrome-extension:// URLs
+    // when they're in web_accessible_resources)
+    const tdResp = await fetch(tdUrl);
+    if (!tdResp.ok) throw new Error('Failed to fetch eng.traineddata: ' + tdResp.status);
+    const tdBuf = await tdResp.arrayBuffer();
+
+    // Create worker without loading any language (empty string skips CDN fetch)
+    _worker = await Tesseract.createWorker([], 1, {
       workerPath,
       corePath,
       langPath,
@@ -20,6 +29,13 @@
       cacheMethod: 'none',
       logger: () => {},
     });
+
+    // Write traineddata directly into the worker's virtual filesystem
+    await _worker.writeText('eng.traineddata', new Uint8Array(tdBuf));
+
+    // Now reinitialize with eng — reads from FS instead of fetching
+    await _worker.reinitialize('eng', 1);
+
     return _worker;
   }
 

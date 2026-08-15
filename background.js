@@ -1,5 +1,18 @@
 const API_BASE = 'https://claude.ai/api';
 const BULK_DELAY_MS = 500;
+const OFFSCREEN_URL = chrome.runtime.getURL('ocr_offscreen.html');
+
+async function ensureOffscreen() {
+  const existing = await chrome.offscreen.hasDocument();
+  if (!existing) {
+    await chrome.offscreen.createDocument({
+      url: OFFSCREEN_URL,
+      reasons: ['BLOBS'],
+      justification: 'Run Tesseract OCR WASM outside host page CSP',
+    });
+    console.log('[bg] offscreen document created');
+  }
+}
 
 chrome.runtime.onInstalled.addListener(() => {
   console.log('[bg] Claudette installed');
@@ -47,6 +60,23 @@ function delay(ms) {
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   console.log('[bg] message:', request.action);
+
+  if (request.action === 'ocr') {
+    (async () => {
+      try {
+        await ensureOffscreen();
+        const result = await chrome.runtime.sendMessage({
+          target: 'offscreen',
+          action: 'ocr',
+          dataUrl: request.dataUrl,
+        });
+        sendResponse(result);
+      } catch (err) {
+        sendResponse({ error: err.message });
+      }
+    })();
+    return true;
+  }
 
   if (request.action === 'detectOrgId') {
     detectOrgId()

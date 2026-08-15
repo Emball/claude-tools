@@ -6,9 +6,9 @@
 
 <p align="center"><em>Designed for Claude by Claude. They say we're soulmates!</em></p>
 
-<p align="center">A Chromium extension for Claude.ai power users. No ads, no telemetry.</p>
+<p align="center">A Chromium extension designed for Claude.ai power users that adds the ability to export chats, manage multi-account and multi-session projects, and much more.</p>
 
-> **Install is manual** — Claudette is not on the Chrome Web Store.
+<p align="center">Designed to be as clean as possible with no ads, annoying GUI elements or distractions.</p>
 
 ---
 

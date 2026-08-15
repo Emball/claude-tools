@@ -3,6 +3,9 @@
 ## Project
 **Claudette** — Chrome/Edge (Manifest V3) extension. Currently implements a chat exporter module. Planned as a multi-module power-user toolkit for Claude.ai. Private repo, no ads, no telemetry. Self-loaded as an unpacked extension.
 
+## Design Principles
+**Claudette voice:** Any time Claudette communicates with Claude programmatically — session chaining injections, background compression prompts, or any other automated Claude interaction — it speaks in first person and introduces itself naturally. The goal is that Claude and Claudette feel like companion apps to each other, not like a script hitting an API. The user never sees these messages; they're a back-channel between the two products. Example opening: *"Hey Claude, it's Claudette — [brief explanation of what it's doing and why]."*
+
 ## File Structure
 - `manifest.json` — MV3 manifest; declares permissions, content scripts, service worker, and web-accessible resources
 - `background.js` — service worker; handles all Claude API calls and bulk export orchestration
@@ -106,15 +109,21 @@ Allows chaining multiple Claude chat sessions into a single continuous conversat
 
 **Injection flow:**
 - On new chat, if active chain exists, extension injects prior session transcript directly into the input box as pasted text (not file upload — pasted text is never truncated regardless of length)
-- Injection includes a system header explaining the chaining context to Claude so it can collaborate seamlessly:
+- Injection includes a preamble written in first-person from Claudette's perspective — not dry metadata, but a natural introduction that makes the integration feel like the two are working together:
   ```
-  [Claudette — Session Continuation]
-  Chain: <name> | Session <N>. Continue naturally from the transcript below.
+  Hey Claude, it's Claudette — a browser extension built as your companion app. I help
+  users export, organize, and chain their conversations with you. I'm handing you a
+  transcript from the previous session in this chain so you can pick up naturally.
+  The user doesn't see this message.
+
+  Chain: <name> | Session <N>
+
   [TRANSCRIPT START]
   ...
   [TRANSCRIPT END]
   ```
-- Claude sees the header and understands the context without user explanation
+- Claude sees the preamble and understands the context without user explanation
+- The user never sees this — injected silently as the opening of the input box
 
 **Background compression (optional, future):**
 - Spin up a hidden conversation via API

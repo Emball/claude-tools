@@ -10,6 +10,20 @@ function injectStyles() {
   const s = document.createElement('style');
   s.id = 'cce-styles';
   s.textContent = `
+    [data-cce="chat-export"],
+    [data-cce="sel-export"] {
+      background: #2e2e2e !important;
+      border-radius: 8px !important;
+    }
+    [data-cce="chat-export"] {
+      position: relative;
+      right: 1.5px;
+    }
+    [data-cce="chat-export"]:hover,
+    [data-cce="sel-export"]:hover {
+      background: #383838 !important;
+    }
+
     .cce-progress-bar-wrap {
       position: absolute;
       left: 50%;

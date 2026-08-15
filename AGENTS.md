@@ -5,7 +5,9 @@
 
 The repo is public. The extension is not on the Chrome Web Store — install is manual.
 
-**Current version: 5.2.0.0**
+**Current version: 6.0.0.1**
+
+**Version sync:** The version in this file and the `"version"` field in `manifest.json` must always be kept in sync. AGENTS.md uses MAJOR.MINOR.PATCH.MICRO; manifest.json uses MAJOR.MINOR.PATCH (drop the MICRO). Update both on every commit.
 
 ---
 

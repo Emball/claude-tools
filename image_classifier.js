@@ -58,7 +58,28 @@ async function ocrDataUrl(dataUrl) {
   });
 }
 
-async function classifyFromUrl(url, index) {
+// Known photo aspect ratios (width:height) produced by cameras and phones.
+// Screenshots are arbitrary crops and almost never land on these exactly.
+// Tolerance of 0.02 allows for minor rounding in thumbnails.
+const PHOTO_RATIOS = [
+  4/3, 3/4,   // classic camera
+  3/2, 2/3,   // DSLR / 35mm
+  16/9, 9/16, // widescreen / portrait video
+  1/1,        // square
+  5/4, 4/5,
+  5/3, 3/5,
+  7/5, 5/7,
+  16/10, 10/16,
+];
+const RATIO_TOLERANCE = 0.02;
+
+function looksLikePhoto(width, height) {
+  if (!width || !height) return false;
+  const ratio = width / height;
+  return PHOTO_RATIOS.some(r => Math.abs(ratio - r) <= RATIO_TOLERANCE);
+}
+
+async function classifyFromUrl(url, width, height, index) {
   let blob;
   try {
     const resp = await fetch(url, { credentials: 'include' });
@@ -69,6 +90,13 @@ async function classifyFromUrl(url, index) {
     return { tier: 3, blob: null };
   }
 
+  // Photos go straight to tier 3 — no point running OCR on them
+  if (looksLikePhoto(width, height)) {
+    console.log(`[classifier] image ${index}: photo ratio (${width}x${height}) → tier 3`);
+    return { tier: 3, blob };
+  }
+
+  // Non-photo dimensions = screenshot candidate → run OCR
   const dataUrl = await new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(reader.result);
@@ -80,18 +108,20 @@ async function classifyFromUrl(url, index) {
     const result = await ocrDataUrl(dataUrl);
     if (result.error) throw new Error(result.error);
     const { text, confidence } = result;
-    console.log(`[classifier] image ${index}: confidence=${confidence}, chars=${text.length}`);
+    console.log(`[classifier] image ${index}: confidence=${confidence}, chars=${text.length}, dims=${width}x${height}`);
+
     if (confidence >= 60 && text.length >= 10) return { tier: 1, text };
     return { tier: 2 };
+
   } catch (err) {
-    console.error('[classifier] OCR error, falling back to tier 3:', err);
-    return { tier: 3, blob };
+    console.error('[classifier] OCR error, falling back to tier 2:', err);
+    return { tier: 2 };
   }
 }
 
 const ImageClassifier = {
   async classify(previewUrl, width, height, index) {
-    return await classifyFromUrl(previewUrl, index);
+    return await classifyFromUrl(previewUrl, width, height, index);
   },
   async terminate() {
     console.log('[classifier] terminate called (worker lives in page context)');

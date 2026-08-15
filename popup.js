@@ -1,11 +1,11 @@
-// popup.js — settings logic
+// popup.js — settings + progress mirror
 
 const DEFAULTS = {
   format:    'md',
   thinking:  false,
   tools:     true,
   images:    true,
-  ocr:       true,
+  ocr:       false,
   zip:       true,
   zipFiles:  true,
 };
@@ -21,6 +21,8 @@ const togZipFiles = document.getElementById('tog-zip-files');
 const subOcr      = document.getElementById('sub-ocr');
 const subZip      = document.getElementById('sub-zip');
 const status      = document.getElementById('status');
+const progLabel   = document.getElementById('prog-label');
+const progFill    = document.getElementById('prog-fill');
 
 function flash(msg) {
   status.textContent = msg;
@@ -42,7 +44,6 @@ function applySettings(s) {
   togZip.checked      = s.zip;
   togZipFiles.checked = s.zipFiles;
   updateSubRows(s.images);
-  console.log('[popup] settings loaded:', s);
 }
 
 chrome.storage.sync.get(DEFAULTS, applySettings);
@@ -52,7 +53,6 @@ btnMd.addEventListener('click', () => {
     btnMd.classList.add('active');
     btnTxt.classList.remove('active');
     flash('Saved');
-    console.log('[popup] format → md');
   });
 });
 btnTxt.addEventListener('click', () => {
@@ -60,7 +60,6 @@ btnTxt.addEventListener('click', () => {
     btnTxt.classList.add('active');
     btnMd.classList.remove('active');
     flash('Saved');
-    console.log('[popup] format → txt');
   });
 });
 
@@ -69,7 +68,6 @@ function makeToggle(el, key, onChange) {
     const val = el.checked;
     chrome.storage.sync.set({ [key]: val }, () => {
       flash('Saved');
-      console.log(`[popup] ${key} → ${val}`);
       if (onChange) onChange(val);
     });
   });
@@ -81,3 +79,21 @@ makeToggle(togImages,   'images', updateSubRows);
 makeToggle(togOcr,      'ocr');
 makeToggle(togZip,      'zip');
 makeToggle(togZipFiles, 'zipFiles');
+
+// ── Progress mirror ───────────────────────────────────────────────────────────
+// Polls chrome.storage.local for cce_progress written by content.js
+
+function updateProgress(data) {
+  if (!data || !data.cce_progress) return;
+  const { pct, label } = data.cce_progress;
+  progFill.style.width  = ((pct || 0) * 100).toFixed(1) + '%';
+  progLabel.textContent = label || 'Idle';
+}
+
+// Poll every 300ms while popup is open
+chrome.storage.local.get(['cce_progress'], updateProgress);
+const pollTimer = setInterval(() => {
+  chrome.storage.local.get(['cce_progress'], updateProgress);
+}, 300);
+
+window.addEventListener('unload', () => clearInterval(pollTimer));

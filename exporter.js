@@ -5,7 +5,7 @@ const EXPORTER_DEFAULTS = {
   thinking: false,
   tools:    true,
   images:   true,
-  ocr:      true,
+  ocr:      false,
   zip:      true,
   zipFiles: true,
 };
@@ -14,6 +14,17 @@ function loadSettings() {
   return new Promise(resolve =>
     chrome.storage.sync.get(EXPORTER_DEFAULTS, resolve)
   );
+}
+
+// --- Progress reporting ---
+// Calls window.cceProgress(phase, current, total, label) if defined.
+// content.js installs that hook; exporter works fine without it.
+
+function reportProgress(phase, current, total, label) {
+  try {
+    if (typeof window !== 'undefined' && typeof window.cceProgress === 'function')
+      window.cceProgress(phase, current, total, label);
+  } catch(e) { /* never block export on progress errors */ }
 }
 
 // --- Message chain builder ---
@@ -57,13 +68,15 @@ function inferLang(filename, content) {
 
 // --- Image routing ---
 
-async function classifyAndRouteFile(file, images, settings) {
+async function classifyAndRouteFile(file, images, settings, imageIndex, imageTotal) {
   const rawUrl = file.preview_asset?.url || file.preview_url || null;
   const previewUrl = rawUrl
     ? (rawUrl.startsWith('http') ? rawUrl : `https://claude.ai${rawUrl}`)
     : null;
 
   const fname = file.file_name || 'image';
+
+  reportProgress('image', imageIndex, imageTotal, fname);
 
   if (!previewUrl)
     return `*<Screenshot: ${fname}>*\n\`\`\`\nno preview available\n\`\`\``;
@@ -100,13 +113,12 @@ async function classifyAndRouteFile(file, images, settings) {
 
 // --- Content block renderer ---
 
-async function contentBlocksToText(blocks, images, nonImageFiles, settings) {
+async function contentBlocksToText(blocks, images, nonImageFiles, settings, imgCounters) {
   if (!Array.isArray(blocks)) return '';
   const parts = [];
 
   for (const block of blocks) {
 
-    // Thinking — italic blockquote if toggle on
     if (block.type === 'thinking') {
       if (settings.thinking) {
         const thought = (block.thinking || block.text || '').trim();
@@ -115,7 +127,6 @@ async function contentBlocksToText(blocks, images, nonImageFiles, settings) {
       continue;
     }
 
-    // Plain text (check for paste flag)
     if (block.type === 'text') {
       if (block.is_paste || block.paste_id) {
         const content = (block.text || '').trim();
@@ -126,7 +137,6 @@ async function contentBlocksToText(blocks, images, nonImageFiles, settings) {
       continue;
     }
 
-    // Tool use — bold blockquote header + JSON input in fenced block
     if (block.type === 'tool_use') {
       if (!settings.tools) continue;
       const name = block.name || 'tool';
@@ -140,7 +150,6 @@ async function contentBlocksToText(blocks, images, nonImageFiles, settings) {
       continue;
     }
 
-    // Tool result — output fenced block
     if (block.type === 'tool_result') {
       if (!settings.tools) continue;
       const content = Array.isArray(block.content)
@@ -150,14 +159,12 @@ async function contentBlocksToText(blocks, images, nonImageFiles, settings) {
       continue;
     }
 
-    // Inline image blocks
     if (block.type === 'image') {
       if (!settings.images) continue;
       console.log('[exporter] inline image block — skipping, handled via files[]');
       continue;
     }
 
-    // Artifact — fenced block with filename as first-line comment
     if (block.type === 'artifact') {
       const fname   = block.title || `artifact_${parts.length}`;
       const lang    = block.language || inferLang(fname, block.content);
@@ -167,7 +174,6 @@ async function contentBlocksToText(blocks, images, nonImageFiles, settings) {
       continue;
     }
 
-    // Document / uploaded file
     if (block.type === 'document') {
       const name = block.name || block.document?.name || 'file';
       const text = block.text || block.document?.text || block.document?.content || '';
@@ -179,7 +185,6 @@ async function contentBlocksToText(blocks, images, nonImageFiles, settings) {
       continue;
     }
 
-    // Pasted context block
     if (block.type === 'context') {
       const content = block.body || block.content || block.text || '';
       parts.push(`*<Pasted>*\n\`\`\`\n${content.trim()}\n\`\`\``);
@@ -194,57 +199,45 @@ async function contentBlocksToText(blocks, images, nonImageFiles, settings) {
 
 // --- Message renderer ---
 
-async function messageToText(msg, images, nonImageFiles, settings) {
+async function messageToText(msg, images, nonImageFiles, settings, imgCounters) {
   const role = msg.sender === 'human' ? '**User:**' : '**Assistant:**';
   let body = '';
 
-  if (msg.sender === 'human') {
-    const hasText =
-      (Array.isArray(msg.content) && msg.content.some(b => b.type === 'text' && b.text))
-      || (typeof msg.content === 'string' && msg.content.trim())
-      || msg.text;
-    if (!hasText && !(msg.files?.length) && !(msg.attachments?.length))
-      console.log('[exporter][debug] empty user msg:', JSON.stringify(msg));
-  }
-
   if (Array.isArray(msg.content)) {
-    body = await contentBlocksToText(msg.content, images, nonImageFiles, settings);
+    body = await contentBlocksToText(msg.content, images, nonImageFiles, settings, imgCounters);
   } else if (typeof msg.content === 'string') {
     body = msg.content;
   } else if (msg.text) {
     body = msg.text;
   }
 
-  // All file attachments — both msg.attachments[] and msg.files[] can contain images or text
   const fileParts = [];
   const allFiles = [...(msg.attachments || []), ...(msg.files || [])];
-  console.log(`[exporter][debug] msg ${msg.uuid} allFiles count:`, allFiles.length, allFiles.map(f => ({kind: f.file_kind, name: f.file_name, success: f.success})));
   for (const file of allFiles) {
     if (file.success === false) continue;
     const rawName = file.file_name || file.name;
     const name    = rawName || 'untitled';
 
     if (file.file_kind === 'image') {
-      console.log(`[exporter][debug] image file hit, settings.images=${settings.images}, name=${name}`);
       if (!settings.images) continue;
+      const idx   = imgCounters.current++;
+      const total = imgCounters.total;
       let rendered;
       try {
-        rendered = await classifyAndRouteFile(file, images, settings);
+        rendered = await classifyAndRouteFile(file, images, settings, idx, total);
       } catch(e) {
-        console.error('[exporter][debug] classifyAndRouteFile threw:', e);
+        console.error('[exporter] classifyAndRouteFile threw:', e);
         rendered = '';
       }
-      console.log(`[exporter][debug] rendered result:`, rendered?.slice?.(0,80));
       if (rendered) fileParts.push(rendered);
     } else {
       const content = file.extracted_content || file.text || file.content || '';
-      if (!content.trim()) continue; // skip empty files entirely
+      if (!content.trim()) continue;
 
       const hasExt = rawName && rawName.includes('.');
       const lang   = inferLang(name, content);
 
       if (!hasExt) {
-        // No real filename/extension — render inline without label or zip entry
         fileParts.push(`\`\`\`${lang}\n${content.trim()}\n\`\`\``);
       } else {
         const comment = lang === 'python' ? `# ${name}` : `// ${name}`;
@@ -261,14 +254,31 @@ async function messageToText(msg, images, nonImageFiles, settings) {
 // --- Conversation renderer ---
 
 async function conversationToText(conv, settings) {
-  const images       = [];
+  const images        = [];
   const nonImageFiles = [];
-  const chain        = buildMessageChain(conv);
-  const lines        = [];
-  for (const m of chain)
-    lines.push(await messageToText(m, images, nonImageFiles, settings));
+  const chain         = buildMessageChain(conv);
+
+  // Count total images upfront so progress bar has a denominator
+  let totalImages = 0;
+  if (settings.images) {
+    for (const m of chain) {
+      const all = [...(m.attachments || []), ...(m.files || [])];
+      totalImages += all.filter(f => f.file_kind === 'image' && f.success !== false).length;
+    }
+  }
+  const imgCounters = { current: 0, total: totalImages };
+
+  reportProgress('start', 0, chain.length, conv.name || conv.uuid);
+
+  const lines = [];
+  for (let i = 0; i < chain.length; i++) {
+    reportProgress('message', i, chain.length, conv.name || conv.uuid);
+    lines.push(await messageToText(chain[i], images, nonImageFiles, settings, imgCounters));
+  }
+
   const text = lines.join('\n\n');
   console.log(`[exporter] rendered ${chain.length} messages, ${images.length} images, ${nonImageFiles.length} files`);
+  reportProgress('done', chain.length, chain.length, conv.name || conv.uuid);
   return { text, images, nonImageFiles };
 }
 
@@ -329,7 +339,9 @@ async function exportBulk(results, settingsOverride) {
   const zip = new JSZip();
   let ok = 0, fail = 0;
 
-  for (const result of results) {
+  for (let ri = 0; ri < results.length; ri++) {
+    const result = results[ri];
+    reportProgress('conv', ri, results.length, result.data?.name || result.uuid || '');
     if (!result.success || !result.data) {
       console.warn('[exporter] skipping failed result:', result.error || result.uuid);
       fail++;
@@ -348,7 +360,9 @@ async function exportBulk(results, settingsOverride) {
   }
 
   console.log(`[exporter] bulk: ${ok} ok, ${fail} failed`);
+  reportProgress('zipping', ok + fail, results.length, 'Packaging ZIP…');
   const blob = await zip.generateAsync({ type: 'blob' });
   await triggerDownload(blob, `claude_export_${Date.now()}.zip`);
+  reportProgress('done', results.length, results.length, 'Done');
   console.log('[exporter] bulk zip downloaded');
 }

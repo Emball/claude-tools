@@ -101,9 +101,19 @@ async function ocrDataUrl(dataUrl) {
 }
 
 // --- Classifier ---
+//
+// Decision matrix:
+//
+//  fingerprint=photo,      zip=on  → save to ZIP
+//  fingerprint=photo,      zip=off → [User posted a photo: filename]
+//
+//  fingerprint=screenshot, ocr=on,  text found                          → [screenshot: "text"]
+//  fingerprint=screenshot, ocr=on,  no text / error / timeout, zip=on  → save to ZIP
+//  fingerprint=screenshot, ocr=on,  no text / error / timeout, zip=off → [screenshot: no extractable text]
+//  fingerprint=screenshot, ocr=off, zip=on  → save to ZIP
+//  fingerprint=screenshot, ocr=off, zip=off → [screenshot: no extractable text]
 
 async function classifyFromUrl(url, width, height, index, settings) {
-  // If images are disabled entirely, skip
   if (!settings.images) {
     console.log(`[classifier] image ${index}: skipped (images disabled)`);
     return { tier: 'skip' };
@@ -118,33 +128,37 @@ async function classifyFromUrl(url, width, height, index, settings) {
     fileSize = blob.size;
   } catch (err) {
     console.error(`[classifier] image ${index}: fetch error:`, err.message);
-    return { tier: 2 };
+    return { tier: 'screenshot-notext' };
   }
 
   const score = photoScore(width, height, fileSize, mimeType);
+  const isPhoto = score >= 2;
   console.log(
     `[classifier] image ${index}: ${width}x${height}, ` +
-    `${(fileSize / 1024).toFixed(0)}KB, ${mimeType}, score=${score}`
+    `${(fileSize / 1024).toFixed(0)}KB, ${mimeType}, score=${score} → ${isPhoto ? 'photo' : 'screenshot'}`
   );
 
-  // Photo — save as file regardless of ZIP setting
-  if (score >= 2) {
-    // If ZIP is off, we can't include the file — fall back to a placeholder
-    if (!settings.zip) {
-      console.log(`[classifier] image ${index}: photo, ZIP disabled → placeholder`);
-      return { tier: 'placeholder', label: 'photo' };
+  // --- Photo path ---
+  if (isPhoto) {
+    if (settings.zip) {
+      console.log(`[classifier] image ${index}: photo, zip=on → save to ZIP`);
+      return { tier: 'save', blob };
     }
-    console.log(`[classifier] image ${index}: photo → tier 3`);
-    return { tier: 3, blob };
+    console.log(`[classifier] image ${index}: photo, zip=off → placeholder`);
+    return { tier: 'photo-nozip' };
   }
 
-  // Screenshot candidate
+  // --- Screenshot path ---
   if (!settings.ocr) {
-    // OCR disabled — drop straight to tier 2 without running Tesseract
-    console.log(`[classifier] image ${index}: screenshot, OCR disabled → tier 2`);
-    return { tier: 2 };
+    if (settings.zip) {
+      console.log(`[classifier] image ${index}: screenshot, ocr=off, zip=on → save to ZIP`);
+      return { tier: 'save', blob };
+    }
+    console.log(`[classifier] image ${index}: screenshot, ocr=off, zip=off → notext`);
+    return { tier: 'screenshot-notext' };
   }
 
+  // OCR enabled — run it
   const dataUrl = await new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload  = () => resolve(reader.result);
@@ -154,13 +168,30 @@ async function classifyFromUrl(url, width, height, index, settings) {
 
   try {
     const { text, confidence } = await ocrDataUrl(dataUrl);
-    console.log(`[classifier] image ${index}: OCR confidence=${confidence}, chars=${text.length}`);
-    if (confidence >= 35 && text.length >= 20) return { tier: 1, text };
-    return { tier: 2 };
+    console.log(`[classifier] image ${index}: OCR confidence=${confidence}, chars=${text?.length ?? 0}`);
+
+    if (confidence >= 35 && text?.length >= 20) {
+      console.log(`[classifier] image ${index}: screenshot with text → inline`);
+      return { tier: 'screenshot-text', text };
+    }
+
+    // OCR ran but found nothing useful
+    if (settings.zip) {
+      console.log(`[classifier] image ${index}: screenshot, no text, zip=on → save to ZIP`);
+      return { tier: 'save', blob };
+    }
+    console.log(`[classifier] image ${index}: screenshot, no text, zip=off → notext`);
+    return { tier: 'screenshot-notext' };
+
   } catch (err) {
-    console.error(`[classifier] image ${index}: OCR error → tier 3:`, err.message);
-    if (settings.zip) return { tier: 3, blob };
-    return { tier: 2 };
+    // OCR errored or timed out — treat same as no text
+    console.error(`[classifier] image ${index}: OCR error (${err.message})`);
+    if (settings.zip) {
+      console.log(`[classifier] image ${index}: OCR error, zip=on → save to ZIP`);
+      return { tier: 'save', blob };
+    }
+    console.log(`[classifier] image ${index}: OCR error, zip=off → notext`);
+    return { tier: 'screenshot-notext' };
   }
 }
 

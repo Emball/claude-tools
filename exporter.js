@@ -61,13 +61,13 @@ async function classifyAndRouteFile(file, images, settings) {
     previewUrl, width, height, images.length, settings
   );
 
-  if (result.tier === 'skip')        return '';
-  if (result.tier === 'placeholder') return `[image: ${file.file_name || 'photo'} (not packaged)]`;
-  if (result.tier === 1)             return `[screenshot: "${result.text}"]`;
-  if (result.tier === 2)             return '[screenshot: no extractable text]';
+  if (result.tier === 'skip')            return '';
+  if (result.tier === 'photo-nozip')     return `[User posted a photo: ${file.file_name || 'image'}]`;
+  if (result.tier === 'screenshot-text') return `[screenshot: "${result.text}"]`;
+  if (result.tier === 'screenshot-notext') return '[screenshot: no extractable text]';
 
-  // tier 3 — save to images folder
-  if (result.blob) {
+  // 'save' — blob already fetched, write to images folder in ZIP
+  if (result.tier === 'save' && result.blob) {
     const ext   = result.blob.type.split('/')[1] || 'webp';
     const fname = file.file_name || `image_${images.length + 1}.${ext}`;
     images.push({ filename: fname, blob: result.blob });

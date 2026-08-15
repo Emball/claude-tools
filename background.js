@@ -2,7 +2,7 @@ const API_BASE = 'https://claude.ai/api';
 const BULK_DELAY_MS = 500;
 
 chrome.runtime.onInstalled.addListener(() => {
-  console.log('[bg] Claude Chat Exporter installed');
+  console.log('[bg] Claudette installed');
   chrome.tabs.query({ url: 'https://claude.ai/*' }, (tabs) => {
     tabs.forEach(tab => {
       chrome.scripting.executeScript({

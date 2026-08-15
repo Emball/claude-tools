@@ -1,7 +1,7 @@
 # AGENTS.md
 
 ## Project
-**Claude Tools** — Chrome/Edge (Manifest V3) extension. Currently implements a chat exporter module. Planned as a multi-module power-user toolkit for Claude.ai. Private repo, no ads, no telemetry. Self-loaded as an unpacked extension.
+**Claudette** — Chrome/Edge (Manifest V3) extension. Currently implements a chat exporter module. Planned as a multi-module power-user toolkit for Claude.ai. Private repo, no ads, no telemetry. Self-loaded as an unpacked extension.
 
 ## File Structure
 - `manifest.json` — MV3 manifest; declares permissions, content scripts, service worker, and web-accessible resources
@@ -108,7 +108,7 @@ Allows chaining multiple Claude chat sessions into a single continuous conversat
 - On new chat, if active chain exists, extension injects prior session transcript directly into the input box as pasted text (not file upload — pasted text is never truncated regardless of length)
 - Injection includes a system header explaining the chaining context to Claude so it can collaborate seamlessly:
   ```
-  [Claude Tools — Session Continuation]
+  [Claudette — Session Continuation]
   Chain: <name> | Session <N>. Continue naturally from the transcript below.
   [TRANSCRIPT START]
   ...

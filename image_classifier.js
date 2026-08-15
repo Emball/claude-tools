@@ -9,46 +9,6 @@ const ImageClassifier = (() => {
   let workerLoading = false;
   let workerQueue = [];
 
-  // Pre-seed IndexedDB with eng.traineddata from extension bundle so the
-  // Tesseract web worker can read it from cache without hitting chrome-extension:// URLs
-  async function seedTrainedData() {
-    const STORE = 'tesseract-cache';
-    const KEY = './eng.traineddata';
-
-    const db = await new Promise((res, rej) => {
-      const req = indexedDB.open(STORE, 1);
-      req.onupgradeneeded = e => e.target.result.createObjectStore(STORE);
-      req.onsuccess = e => res(e.target.result);
-      req.onerror = rej;
-    });
-
-    // Check if already cached
-    const existing = await new Promise((res, rej) => {
-      const tx = db.transaction(STORE, 'readonly');
-      const req = tx.objectStore(STORE).get(KEY);
-      req.onsuccess = e => res(e.target.result);
-      req.onerror = rej;
-    });
-    if (existing) {
-      console.log('[classifier] eng.traineddata already in IndexedDB cache');
-      return;
-    }
-
-    console.log('[classifier] seeding eng.traineddata into IndexedDB...');
-    const url = chrome.runtime.getURL('eng.traineddata');
-    const resp = await fetch(url);
-    const buf = await resp.arrayBuffer();
-    const data = new Uint8Array(buf);
-
-    await new Promise((res, rej) => {
-      const tx = db.transaction(STORE, 'readwrite');
-      const req = tx.objectStore(STORE).put(data, KEY);
-      req.onsuccess = res;
-      req.onerror = rej;
-    });
-    console.log('[classifier] eng.traineddata seeded successfully');
-  }
-
   async function getWorker() {
     if (workerReady) return tesseractWorker;
     if (workerLoading) return new Promise((res, rej) => workerQueue.push({ res, rej }));
@@ -56,16 +16,27 @@ const ImageClassifier = (() => {
     workerLoading = true;
     console.log('[classifier] loading Tesseract worker');
     try {
-      await seedTrainedData();
+      // Fetch traineddata in content script context (can access chrome-extension:// URLs)
+      const tdUrl = chrome.runtime.getURL('eng.traineddata');
+      const tdResp = await fetch(tdUrl);
+      const tdBuf = new Uint8Array(await tdResp.arrayBuffer());
+      console.log(`[classifier] traineddata fetched: ${tdBuf.length} bytes`);
 
       const workerUrl = chrome.runtime.getURL('worker.min.js');
-      const worker = await Tesseract.createWorker('eng', 1, {
+
+      // Create worker without auto-loading language (we'll write the file manually)
+      const worker = await Tesseract.createWorker(null, 1, {
         workerPath: workerUrl,
-        cachePath: '.',       // matches the KEY prefix in IndexedDB
-        cacheMethod: 'read',  // read-only: use cache, don't try to write or re-fetch
+        cacheMethod: 'none', // don't try to fetch or cache anything
         gzip: false,
         logger: () => {},
       });
+
+      // Write traineddata directly into the worker's virtual filesystem
+      await worker.writeText('eng.traineddata', tdBuf);
+
+      // Now initialize with the pre-written data
+      await worker.reinitialize('eng', Tesseract.OEM.LSTM_ONLY);
 
       tesseractWorker = worker;
       workerReady = true;

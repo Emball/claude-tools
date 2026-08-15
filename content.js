@@ -286,6 +286,7 @@ function injectSelectionBarButton() {
   btn.setAttribute('data-cce', 'sel-export');
   btn.setAttribute('title', 'Export selected chats');
   btn.setAttribute('data-cds', 'Button');
+  btn.setAttribute('aria-pressed', 'false');
   btn.innerHTML = `<span class="inline-flex min-w-0 items-center gap-1 ">Export</span>`;
   btn.className = cancelBtn.className;
   btn.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); exportSelected(); });
@@ -305,6 +306,7 @@ function injectChatTopBarButton() {
   const btn = document.createElement('button');
   btn.setAttribute('data-cce', 'chat-export');
   btn.setAttribute('title', 'Export this chat');
+  btn.setAttribute('aria-pressed', 'false');
   btn.className = shareBtn.className;
   btn.innerHTML = `<span class="inline-flex min-w-0 items-center gap-1 ">Export</span>`;
   btn.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); exportCurrentChat(); });

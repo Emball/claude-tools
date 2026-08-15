@@ -16,27 +16,48 @@ const ImageClassifier = (() => {
     workerLoading = true;
     console.log('[classifier] loading Tesseract worker');
     try {
-      // Fetch traineddata in content script context (can access chrome-extension:// URLs)
+      // Fetch traineddata in content script context — only place chrome-extension:// URLs work
       const tdUrl = chrome.runtime.getURL('eng.traineddata');
       const tdResp = await fetch(tdUrl);
       const tdBuf = new Uint8Array(await tdResp.arrayBuffer());
-      console.log(`[classifier] traineddata fetched: ${tdBuf.length} bytes`);
+      console.log(`[classifier] traineddata fetched: ${tdBuf.byteLength} bytes`);
+
+      // Wrap as blob URL — blob URLs are accessible from Web Worker context unlike chrome-extension://
+      const tdBlob = new Blob([tdBuf], { type: 'application/octet-stream' });
+      const tdBlobUrl = URL.createObjectURL(tdBlob);
+      // Tesseract fetches ${langPath}/eng.traineddata — we need a "directory" that serves the file.
+      // Blob URLs can't act as directories, so we use a different approach:
+      // serve the file via a second blob URL that encodes the full path trick.
+      // Actually the cleanest approach: create a blob URL for the file itself,
+      // then use a ServiceWorker-less intercept by overriding fetch globally.
 
       const workerUrl = chrome.runtime.getURL('worker.min.js');
 
-      // Create worker without auto-loading language (we'll write the file manually)
-      const worker = await Tesseract.createWorker(null, 1, {
+      // Intercept fetch in this page context to serve our traineddata for any traineddata request
+      const origFetch = window.fetch;
+      const interceptedFetch = function(url, opts) {
+        if (typeof url === 'string' && url.includes('eng.traineddata')) {
+          console.log('[classifier] intercepting traineddata fetch:', url);
+          return Promise.resolve(new Response(tdBuf, {
+            status: 200,
+            headers: { 'Content-Type': 'application/octet-stream' },
+          }));
+        }
+        return origFetch.call(window, url, opts);
+      };
+      window.fetch = interceptedFetch;
+
+      const worker = await Tesseract.createWorker('eng', Tesseract.OEM.LSTM_ONLY, {
         workerPath: workerUrl,
-        cacheMethod: 'none', // don't try to fetch or cache anything
+        langPath: window.location.origin, // any valid origin — our fetch intercept will catch it
+        cacheMethod: 'none',
         gzip: false,
         logger: () => {},
       });
 
-      // Write traineddata directly into the worker's virtual filesystem
-      await worker.writeText('eng.traineddata', tdBuf);
-
-      // Now initialize with the pre-written data
-      await worker.reinitialize('eng', Tesseract.OEM.LSTM_ONLY);
+      // Restore original fetch
+      window.fetch = origFetch;
+      URL.revokeObjectURL(tdBlobUrl);
 
       tesseractWorker = worker;
       workerReady = true;

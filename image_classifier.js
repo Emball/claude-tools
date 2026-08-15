@@ -142,7 +142,7 @@ async function classifyFromUrl(url, width, height, index, settings) {
   if (isPhoto) {
     if (settings.zip) {
       console.log(`[classifier] image ${index}: photo, zip=on → save to ZIP`);
-      return { tier: 'save', blob };
+      return { tier: 'save', blob, isPhoto: true };
     }
     console.log(`[classifier] image ${index}: photo, zip=off → placeholder`);
     return { tier: 'photo-nozip' };

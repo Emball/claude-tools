@@ -221,7 +221,8 @@ async function messageToText(msg, images, nonImageFiles, settings) {
   console.log(`[exporter][debug] msg ${msg.uuid} allFiles count:`, allFiles.length, allFiles.map(f => ({kind: f.file_kind, name: f.file_name, success: f.success})));
   for (const file of allFiles) {
     if (file.success === false) continue;
-    const name = file.file_name || file.name || 'file';
+    const rawName = file.file_name || file.name;
+    const name    = rawName || 'untitled';
 
     if (file.file_kind === 'image') {
       console.log(`[exporter][debug] image file hit, settings.images=${settings.images}, name=${name}`);
@@ -238,12 +239,14 @@ async function messageToText(msg, images, nonImageFiles, settings) {
     } else {
       const content = file.extracted_content || file.text || file.content || '';
       const lang    = inferLang(name, content);
-      const comment = lang === 'python' ? `# ${name}` : `// ${name}`;
+      const comment = rawName ? (lang === 'python' ? `# ${name}` : `// ${name}`) : null;
+      const label   = rawName ? `*<File: ${name}>*` : `*<File: untitled>*`;
       if (content) {
-        fileParts.push(`*<File: ${name}>*\n\`\`\`${lang}\n${comment}\n${content.trim()}\n\`\`\``);
+        const block = comment ? `${label}\n\`\`\`${lang}\n${comment}\n${content.trim()}\n\`\`\`` : `${label}\n\`\`\`${lang}\n${content.trim()}\n\`\`\``;
+        fileParts.push(block);
         if (settings.zipFiles) nonImageFiles.push({ filename: name, content: content.trim() });
       } else {
-        fileParts.push(`*<File: ${name}>*\n\`\`\`\n(binary file)\n\`\`\``);
+        fileParts.push(`${label}\n\`\`\`\n(binary file)\n\`\`\``);
       }
     }
   }

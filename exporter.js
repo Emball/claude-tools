@@ -1,4 +1,4 @@
-// exporter.js — converts raw Claude API conversation data to MD/TXT and packages ZIP
+// exporter.js — converts raw Claude API conversation data to MD and packages ZIP
 
 const EXPORTER_DEFAULTS = {
   format:   'md',
@@ -7,6 +7,7 @@ const EXPORTER_DEFAULTS = {
   images:   true,
   ocr:      true,
   zip:      true,
+  zipFiles: true,
 };
 
 function loadSettings() {
@@ -42,6 +43,18 @@ function sanitizeFilename(name) {
   return name.replace(/[^a-z0-9_\-. ]/gi, '_').trim().slice(0, 80);
 }
 
+function inferLang(filename, content) {
+  const ext = (filename || '').split('.').pop().toLowerCase();
+  const langMap = {
+    js: 'js', ts: 'ts', py: 'python', rb: 'ruby', go: 'go',
+    rs: 'rust', java: 'java', cpp: 'cpp', c: 'c', cs: 'csharp',
+    html: 'html', css: 'css', json: 'json', yaml: 'yaml', yml: 'yaml',
+    sh: 'bash', bash: 'bash', md: 'md', sql: 'sql', swift: 'swift',
+    kt: 'kotlin', php: 'php', r: 'r', scala: 'scala',
+  };
+  return langMap[ext] || '';
+}
+
 // --- Image routing ---
 
 async function classifyAndRouteFile(file, images, settings) {
@@ -51,8 +64,10 @@ async function classifyAndRouteFile(file, images, settings) {
         : `https://claude.ai${file.preview_url}`)
     : null;
 
+  const fname = file.file_name || 'image';
+
   if (!previewUrl)
-    return `[image: ${file.file_name || 'unknown'} (no preview available)]`;
+    return `*<Screenshot: ${fname}>*\n\`\`\`\nno preview available\n\`\`\``;
 
   const width  = file.preview_asset?.image_width;
   const height = file.preview_asset?.image_height;
@@ -61,102 +76,114 @@ async function classifyAndRouteFile(file, images, settings) {
     previewUrl, width, height, images.length, settings
   );
 
-  if (result.tier === 'skip')            return '';
-  if (result.tier === 'photo-nozip')     return `[User posted a photo: ${file.file_name || 'image'}]`;
-  if (result.tier === 'screenshot-text') return `[screenshot: "${result.text}"]`;
-  if (result.tier === 'screenshot-notext') return '[screenshot: no extractable text]';
+  if (result.tier === 'skip') return '';
 
-  // 'save' — blob already fetched, write to images folder in ZIP
+  if (result.tier === 'photo-nozip')
+    return `*<Photo: ${fname}>*`;
+
+  if (result.tier === 'screenshot-text')
+    return `*<Screenshot: ${fname}>*\n\`\`\`\n${result.text}\n\`\`\``;
+
+  if (result.tier === 'screenshot-notext')
+    return `*<Screenshot: ${fname}>*\n\`\`\`\nno extractable text\n\`\`\``;
+
+  // 'save' — write blob to images folder
   if (result.tier === 'save' && result.blob) {
     const ext   = result.blob.type.split('/')[1] || 'webp';
-    const fname = file.file_name || `image_${images.length + 1}.${ext}`;
-    images.push({ filename: fname, blob: result.blob });
-    return `![${fname}](./images/${fname})`;
+    const iname = file.file_name || `image_${images.length + 1}.${ext}`;
+    images.push({ filename: iname, blob: result.blob });
+    const isPhoto = result.isPhoto;
+    return `*<${isPhoto ? 'Photo' : 'Screenshot'}: ${iname}>*\n![${iname}](./images/${iname})`;
   }
-  return `[image: ${file.file_name || 'unknown'} (fetch failed)]`;
+
+  return `*<Screenshot: ${fname}>*\n\`\`\`\nfetch failed\n\`\`\``;
 }
 
 // --- Content block renderer ---
 
-async function contentBlocksToText(blocks, images, settings) {
+async function contentBlocksToText(blocks, images, nonImageFiles, settings) {
   if (!Array.isArray(blocks)) return '';
   const parts = [];
 
   for (const block of blocks) {
 
-    // Thinking — include as italics if toggle on, else skip
+    // Thinking — italic blockquote if toggle on
     if (block.type === 'thinking') {
       if (settings.thinking) {
         const thought = (block.thinking || block.text || '').trim();
-        if (thought) parts.push(`*[thinking: ${thought}]*`);
+        if (thought) parts.push(`> *${thought}*`);
       }
       continue;
     }
 
-    // Plain text (may be a paste — detected by is_paste flag)
+    // Plain text (check for paste flag)
     if (block.type === 'text') {
       if (block.is_paste || block.paste_id) {
-        parts.push(`[pasted: "${(block.text || '').trim()}"]`);
+        const content = (block.text || '').trim();
+        parts.push(`*<Pasted>*\n\`\`\`\n${content}\n\`\`\``);
       } else {
         parts.push(block.text || '');
       }
       continue;
     }
 
-    // Tool use
+    // Tool use — bold blockquote header + JSON input in fenced block
     if (block.type === 'tool_use') {
       if (!settings.tools) continue;
       const name = block.name || 'tool';
+      const title = block.title || name;
       if (block.input && Object.keys(block.input).length > 0) {
         const inputStr = JSON.stringify(block.input, null, 2);
-        parts.push(`[${name}:\n${inputStr}]`);
+        parts.push(`> **${title}**\n\`\`\`json\n${inputStr}\n\`\`\``);
       } else {
-        parts.push(`[${name}]`);
+        parts.push(`> **${title}**`);
       }
       continue;
     }
 
-    // Tool result — output of a tool call (bash output, search results, etc.)
+    // Tool result — output fenced block
     if (block.type === 'tool_result') {
       if (!settings.tools) continue;
       const content = Array.isArray(block.content)
         ? block.content.map(c => c.text || '').join('\n')
         : (block.content || '');
-      if (content.trim()) parts.push(`[output:\n${content.trim()}]`);
+      if (content.trim()) parts.push(`\`\`\`\n${content.trim()}\n\`\`\``);
       continue;
     }
 
-    // Inline image blocks (rare — most images are in msg.files[])
+    // Inline image blocks
     if (block.type === 'image') {
       if (!settings.images) continue;
-      console.log('[exporter] inline image block — handled via files[] normally');
+      console.log('[exporter] inline image block — skipping, handled via files[]');
       continue;
     }
 
-    // Artifact block
+    // Artifact — fenced block with filename as first-line comment
     if (block.type === 'artifact') {
       const fname   = block.title || `artifact_${parts.length}`;
-      const lang    = block.language || '';
+      const lang    = block.language || inferLang(fname, block.content);
       const content = block.content || '';
-      parts.push(`[artifact: ${fname}]\n\`\`\`${lang}\n${content}\n\`\`\``);
+      const comment = lang === 'python' ? `# ${fname}` : `// ${fname}`;
+      parts.push(`\`\`\`${lang}\n${comment}\n${content}\n\`\`\``);
       continue;
     }
 
     // Document / uploaded file
     if (block.type === 'document') {
       const name = block.name || block.document?.name || 'file';
-      const text = block.text
-        || block.document?.text
-        || block.document?.content
-        || '';
-      parts.push(`[${name}: "${text.trim()}"]`);
+      const text = block.text || block.document?.text || block.document?.content || '';
+      const lang  = inferLang(name, text);
+      const comment = lang === 'python' ? `# ${name}` : `// ${name}`;
+      const entry = `*<File: ${name}>*\n\`\`\`${lang}\n${comment}\n${text.trim()}\n\`\`\``;
+      if (settings.zipFiles) nonImageFiles.push({ filename: name, content: text.trim() });
+      parts.push(entry);
       continue;
     }
 
     // Pasted context block
     if (block.type === 'context') {
       const content = block.body || block.content || block.text || '';
-      parts.push(`[pasted: "${content.trim()}"]`);
+      parts.push(`*<Pasted>*\n\`\`\`\n${content.trim()}\n\`\`\``);
       continue;
     }
 
@@ -168,21 +195,21 @@ async function contentBlocksToText(blocks, images, settings) {
 
 // --- Message renderer ---
 
-async function messageToText(msg, images, settings) {
-  const role = msg.sender === 'human' ? 'user' : 'assistant';
+async function messageToText(msg, images, nonImageFiles, settings) {
+  const role = msg.sender === 'human' ? '**User:**' : '**Assistant:**';
   let body = '';
 
-  // Debug: empty user messages (image-only uploads etc.)
   if (msg.sender === 'human') {
     const hasText =
       (Array.isArray(msg.content) && msg.content.some(b => b.type === 'text' && b.text))
       || (typeof msg.content === 'string' && msg.content.trim())
       || msg.text;
-    if (!hasText) console.log('[exporter][debug] empty user msg:', JSON.stringify(msg));
+    if (!hasText && !(msg.files?.length) && !(msg.attachments?.length))
+      console.log('[exporter][debug] empty user msg:', JSON.stringify(msg));
   }
 
   if (Array.isArray(msg.content)) {
-    body = await contentBlocksToText(msg.content, images, settings);
+    body = await contentBlocksToText(msg.content, images, nonImageFiles, settings);
   } else if (typeof msg.content === 'string') {
     body = msg.content;
   } else if (msg.text) {
@@ -195,42 +222,78 @@ async function messageToText(msg, images, settings) {
     for (const att of msg.attachments) {
       const name    = att.file_name || att.name || 'file';
       const content = att.extracted_content || att.text || att.content || '';
-      attachmentParts.push(
-        content
-          ? `[${name}: "${content.trim()}"]`
-          : `[${name}: (binary file)]`
-      );
+      const lang    = inferLang(name, content);
+      const comment = lang === 'python' ? `# ${name}` : `// ${name}`;
+      if (content) {
+        attachmentParts.push(`*<File: ${name}>*\n\`\`\`${lang}\n${comment}\n${content.trim()}\n\`\`\``);
+        if (settings.zipFiles) nonImageFiles.push({ filename: name, content: content.trim() });
+      } else {
+        attachmentParts.push(`*<File: ${name}>*\n\`\`\`\n(binary file)\n\`\`\``);
+      }
     }
   }
 
   // Images at msg.files[]
   const fileParts = [];
-  if (settings.images && Array.isArray(msg.files)) {
+  if (Array.isArray(msg.files)) {
     for (const file of msg.files) {
       if (!file.success) continue;
       if (file.file_kind === 'image') {
+        if (!settings.images) continue;
         const rendered = await classifyAndRouteFile(file, images, settings);
         if (rendered) fileParts.push(rendered);
       } else {
-        fileParts.push(`[${file.file_name || 'file'}: (binary)]`);
+        const name    = file.file_name || 'file';
+        const content = file.extracted_content || '';
+        const lang    = inferLang(name, content);
+        const comment = lang === 'python' ? `# ${name}` : `// ${name}`;
+        if (content) {
+          fileParts.push(`*<File: ${name}>*\n\`\`\`${lang}\n${comment}\n${content.trim()}\n\`\`\``);
+          if (settings.zipFiles) nonImageFiles.push({ filename: name, content: content.trim() });
+        } else {
+          fileParts.push(`*<File: ${name}>*\n\`\`\`\n(binary file)\n\`\`\``);
+        }
       }
     }
   }
 
   const allParts = [body.trim(), ...attachmentParts, ...fileParts].filter(Boolean);
-  return `${role}:\n${allParts.join('\n\n')}`;
+  return `${role} ${allParts.join('\n\n')}`;
 }
 
 // --- Conversation renderer ---
 
 async function conversationToText(conv, settings) {
-  const images = [];
-  const chain  = buildMessageChain(conv);
-  const lines  = [];
-  for (const m of chain) lines.push(await messageToText(m, images, settings));
+  const images       = [];
+  const nonImageFiles = [];
+  const chain        = buildMessageChain(conv);
+  const lines        = [];
+  for (const m of chain)
+    lines.push(await messageToText(m, images, nonImageFiles, settings));
   const text = lines.join('\n\n');
-  console.log(`[exporter] rendered ${chain.length} messages, ${images.length} images`);
-  return { text, images };
+  console.log(`[exporter] rendered ${chain.length} messages, ${images.length} images, ${nonImageFiles.length} files`);
+  return { text, images, nonImageFiles };
+}
+
+// --- ZIP builder ---
+
+function buildZip(title, text, ext, images, nonImageFiles, settings) {
+  const zip = new JSZip();
+  zip.file(`${title}.${ext}`, text);
+  if (settings.zip && images.length > 0)
+    images.forEach(img => zip.folder('images').file(img.filename, img.blob));
+  if (settings.zipFiles && nonImageFiles.length > 0)
+    nonImageFiles.forEach(f => zip.folder('files').file(f.filename, f.content));
+  return zip;
+}
+
+async function triggerDownload(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a   = document.createElement('a');
+  a.href     = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 // --- Export entry points ---
@@ -242,44 +305,27 @@ async function exportSingle(conv, settingsOverride) {
   const title    = sanitizeFilename(conv.name || conv.uuid);
   console.log(`[exporter] exporting single: ${conv.uuid}`);
 
-  const { text, images } = await conversationToText(conv, settings);
+  const { text, images, nonImageFiles } = await conversationToText(conv, settings);
+  const needsZip = (images.length > 0 && settings.zip) || (nonImageFiles.length > 0 && settings.zipFiles);
 
-  const hasImages = images.length > 0;
-
-  if (!hasImages || !settings.zip) {
-    // Bare .md/.txt file
-    const blob = new Blob([text], { type: 'text/plain' });
-    const url  = URL.createObjectURL(blob);
-    const a    = document.createElement('a');
-    a.href     = url;
-    a.download = `${title}.${ext}`;
-    a.click();
-    URL.revokeObjectURL(url);
+  if (!needsZip) {
+    await triggerDownload(new Blob([text], { type: 'text/plain' }), `${title}.${ext}`);
     console.log(`[exporter] single done (no zip): ${title}.${ext}`);
     return;
   }
 
-  // ZIP with images
-  const zip = new JSZip();
-  zip.file(`${title}.${ext}`, text);
-  images.forEach(img => zip.folder('images').file(img.filename, img.blob));
+  const zip  = buildZip(title, text, ext, images, nonImageFiles, settings);
   const blob = await zip.generateAsync({ type: 'blob' });
-  const url  = URL.createObjectURL(blob);
-  const a    = document.createElement('a');
-  a.href     = url;
-  a.download = `${title}.zip`;
-  a.click();
-  URL.revokeObjectURL(url);
-  console.log(`[exporter] single done (with images): ${title}.zip`);
+  await triggerDownload(blob, `${title}.zip`);
+  console.log(`[exporter] single done (zip): ${title}.zip`);
 }
 
 async function exportBulk(results, settingsOverride) {
   const settings = settingsOverride || await loadSettings();
   const format   = settings.format || 'md';
 
-  if (results.length === 1 && results[0].success && results[0].data) {
+  if (results.length === 1 && results[0].success && results[0].data)
     return exportSingle(results[0].data, settings);
-  }
 
   console.log(`[exporter] bulk export: ${results.length} results`);
   const ext = format === 'txt' ? 'txt' : 'md';
@@ -292,25 +338,20 @@ async function exportBulk(results, settingsOverride) {
       fail++;
       continue;
     }
-    const conv    = result.data;
-    const title   = sanitizeFilename(conv.name || conv.uuid);
-    const folder  = zip.folder(title);
-    const { text, images } = await conversationToText(conv, settings);
+    const conv   = result.data;
+    const title  = sanitizeFilename(conv.name || conv.uuid);
+    const folder = zip.folder(title);
+    const { text, images, nonImageFiles } = await conversationToText(conv, settings);
     folder.file(`${title}.${ext}`, text);
-    if (images.length > 0 && settings.zip) {
-      const imgFolder = folder.folder('images');
-      images.forEach(img => imgFolder.file(img.filename, img.blob));
-    }
+    if (settings.zip && images.length > 0)
+      images.forEach(img => folder.folder('images').file(img.filename, img.blob));
+    if (settings.zipFiles && nonImageFiles.length > 0)
+      nonImageFiles.forEach(f => folder.folder('files').file(f.filename, f.content));
     ok++;
   }
 
   console.log(`[exporter] bulk: ${ok} ok, ${fail} failed`);
   const blob = await zip.generateAsync({ type: 'blob' });
-  const url  = URL.createObjectURL(blob);
-  const a    = document.createElement('a');
-  a.href     = url;
-  a.download = `claude_export_${Date.now()}.zip`;
-  a.click();
-  URL.revokeObjectURL(url);
+  await triggerDownload(blob, `claude_export_${Date.now()}.zip`);
   console.log('[exporter] bulk zip downloaded');
 }

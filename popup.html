@@ -35,7 +35,6 @@
 
     .row.sub {
       padding-left: 12px;
-      opacity: 1;
       transition: opacity 0.15s;
     }
     .row.sub.disabled {
@@ -43,16 +42,9 @@
       pointer-events: none;
     }
 
-    .label {
-      color: #c8c8c8;
-      font-size: 12px;
-    }
-    .row.sub .label {
-      color: #9a9a9a;
-      font-size: 11px;
-    }
+    .label { color: #c8c8c8; font-size: 12px; }
+    .row.sub .label { color: #9a9a9a; font-size: 11px; }
 
-    /* Pill toggle for format */
     .toggle-group {
       display: flex;
       background: #2a2a2a;
@@ -76,7 +68,6 @@
       color: #e8e8e8;
     }
 
-    /* On/off switch */
     .switch {
       position: relative;
       width: 30px;
@@ -109,11 +100,7 @@
       background: #a8c8a8;
     }
 
-    .divider {
-      height: 1px;
-      background: #242424;
-      margin: 8px 0;
-    }
+    .divider { height: 1px; background: #242424; margin: 8px 0; }
 
     .status {
       font-size: 10px;
@@ -178,6 +165,18 @@
     <span class="label">Package images in ZIP</span>
     <label class="switch">
       <input type="checkbox" id="tog-zip" checked>
+      <div class="switch-track"></div>
+      <div class="switch-thumb"></div>
+    </label>
+  </div>
+
+  <div class="divider"></div>
+  <div class="section-label">Files</div>
+
+  <div class="row">
+    <span class="label">ZIP non-image files</span>
+    <label class="switch">
+      <input type="checkbox" id="tog-zip-files" checked>
       <div class="switch-track"></div>
       <div class="switch-thumb"></div>
     </label>

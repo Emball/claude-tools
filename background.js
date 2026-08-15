@@ -72,8 +72,10 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === 'ocr') {
     (async () => {
       try {
-        await ensureOffscreen();
-        // Send to offscreen and wait for it to reply via a separate sendMessage back
+        // Inject engine iframe via executeScript — runs as extension code,
+        // so iframes it creates inherit extension CSP not claude.ai's CSP
+        const tabId = sender.tab ? sender.tab.id : (await chrome.tabs.query({ active: true, currentWindow: true }))[0].id;
+        const engineUrl = chrome.runtime.getURL('ocr_engine.html');
         const result = await new Promise((resolve, reject) => {
           const id = Math.random().toString(36).slice(2);
           const timer = setTimeout(() => {
@@ -89,15 +91,38 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             }
           }
           chrome.runtime.onMessage.addListener(listener);
-          chrome.runtime.sendMessage({
-            target: 'offscreen',
-            action: 'ocr',
-            id,
-            dataUrl: request.dataUrl,
+          chrome.scripting.executeScript({
+            target: { tabId },
+            func: (engineUrl, id, dataUrl) => {
+              let frame = document.getElementById('cce-ocr-engine-' + id);
+              if (!frame) {
+                frame = document.createElement('iframe');
+                frame.id = 'cce-ocr-engine-' + id;
+                frame.style.cssText = 'display:none!important;width:0;height:0;border:0;position:fixed;';
+                frame.src = engineUrl;
+                frame.onload = () => {
+                  frame.contentWindow.postMessage({ __cce_engine_run: { id, dataUrl } }, '*');
+                };
+                document.documentElement.appendChild(frame);
+              }
+              window.addEventListener('message', function handler(e) {
+                if (!e.data || !e.data.__cce_engine_result) return;
+                if (e.data.__cce_engine_result.id !== id) return;
+                window.removeEventListener('message', handler);
+                frame.remove();
+                chrome.runtime.sendMessage({
+                  action: 'ocr_result',
+                  id: e.data.__cce_engine_result.id,
+                  result: e.data.__cce_engine_result.result,
+                });
+              });
+            },
+            args: [engineUrl, id, request.dataUrl],
           });
         });
         sendResponse(result);
       } catch (err) {
+        console.error('[bg] OCR error:', err);
         sendResponse({ error: err.message });
       }
     })();

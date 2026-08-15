@@ -1,27 +1,55 @@
 // image_classifier.js
-// Three-tier image classification using Tesseract.js, fully local.
-// Tier 1: screenshot with text  → { tier: 1, text: "..." }
-// Tier 2: screenshot, no text  → { tier: 2 }
-// Tier 3: photo/image          → { tier: 3, blob }
+// Injected as a content script. Injects tesseract.min.js into the PAGE context
+// (via <script> tag) to bypass the content script sandbox restrictions that
+// block Worker creation from chrome-extension:// URLs.
 
 let worker = null;
+let tesseractReady = null;
+
+// Inject tesseract.min.js into the page DOM so it runs in page context,
+// not the content script sandbox. Returns a promise that resolves when loaded.
+function injectTesseract() {
+  if (tesseractReady) return tesseractReady;
+
+  tesseractReady = new Promise((resolve, reject) => {
+    if (document.getElementById('cce-tesseract')) {
+      resolve();
+      return;
+    }
+    const script = document.createElement('script');
+    script.id = 'cce-tesseract';
+    script.src = chrome.runtime.getURL('tesseract.min.js');
+    script.onload = () => {
+      console.log('[classifier] tesseract.min.js injected into page context');
+      resolve();
+    };
+    script.onerror = (e) => reject(new Error('Failed to inject tesseract.min.js: ' + e));
+    (document.head || document.documentElement).appendChild(script);
+  });
+
+  return tesseractReady;
+}
 
 async function getWorker() {
   if (worker) return worker;
 
+  await injectTesseract();
+
   console.log('[classifier] initializing Tesseract worker');
 
-  // workerBlobURL: true makes Tesseract create a tiny blob that calls
-  // importScripts(workerPath) — importScripts CAN load chrome-extension://
-  // URLs from inside a worker, even when new Worker(chromeExtUrl) cannot.
+  // All paths must be folders or exact files as chrome-extension:// URLs.
+  // corePath = folder containing tesseract-core-lstm.wasm.js (Tesseract appends filename)
+  // langPath = folder containing eng.traineddata
+  // workerPath = exact path to worker.min.js
   const workerPath = chrome.runtime.getURL('worker.min.js');
-  const langPath   = chrome.runtime.getURL('');
-  const corePath   = chrome.runtime.getURL('tesseract-core-lstm.wasm.js');
+  const corePath   = chrome.runtime.getURL('');  // root folder
+  const langPath   = chrome.runtime.getURL('');  // root folder
 
-  worker = await Tesseract.createWorker('eng', Tesseract.OEM.LSTM_ONLY, {
+  // window.Tesseract is set by the injected page-context script
+  worker = await window.Tesseract.createWorker('eng', 1, {
     workerPath,
-    langPath,
     corePath,
+    langPath,
     workerBlobURL: true,
     cacheMethod: 'none',
     logger: () => {},
@@ -34,7 +62,6 @@ async function getWorker() {
 // Classify an image from a URL (preview_url from the API).
 // Returns: { tier: 1, text } | { tier: 2 } | { tier: 3, blob }
 async function classifyFromUrl(url, index) {
-  // Fetch the image as a blob first (needed for both OCR and tier-3 saving)
   let blob;
   try {
     const resp = await fetch(url, { credentials: 'include' });
@@ -45,7 +72,6 @@ async function classifyFromUrl(url, index) {
     return { tier: 3, blob: null };
   }
 
-  // Convert blob to data URL for Tesseract
   const dataUrl = await new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(reader.result);
@@ -72,12 +98,10 @@ async function classifyFromUrl(url, index) {
   }
 }
 
-// Namespace that exporter.js expects
 const ImageClassifier = {
   async classify(previewUrl, width, height, index) {
     return await classifyFromUrl(previewUrl, index);
   },
-
   async terminate() {
     if (worker) {
       await worker.terminate();

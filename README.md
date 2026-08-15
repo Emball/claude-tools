@@ -4,9 +4,9 @@
 
 <h1 align="center">Claudette</h1>
 
-<p align="center"><em>Designed for Claude by Claude. They say we're soulmates!</em></p>
-
 <p align="center">A Chromium extension companion to Claude.ai that adds several features catered to power users. No ads, no telemetry, clean UI.</p>
+
+<p align="center"><em>Designed for Claude by Claude. They say we're soulmates!</em></p>
 
 ---
 

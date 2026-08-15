@@ -37,7 +37,7 @@
   },
   "web_accessible_resources": [
     {
-      "resources": ["exporter.js", "jszip.min.js", "image_classifier.js", "tesseract.min.js", "tesseract-core-lstm.wasm.js", "worker.min.js", "eng.traineddata", "ocr_page.js"],
+      "resources": ["exporter.js", "jszip.min.js", "image_classifier.js", "tesseract.min.js", "tesseract-core-lstm.wasm.js", "tesseract-core-simd-lstm.wasm.js", "tesseract-core-relaxedsimd-lstm.wasm.js", "tesseract-core-simd.wasm.js", "tesseract-core.wasm.js", "worker.min.js", "eng.traineddata", "ocr_page.js"],
       "matches": ["https://claude.ai/*"],
       "use_dynamic_url": true
     }

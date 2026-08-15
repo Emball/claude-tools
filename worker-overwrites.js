@@ -66,4 +66,4 @@ self.fetch = new Proxy(self.fetch, {
   }
 });
 
-self.importScripts('tesseract/worker.min.js');
+self.importScripts('worker.min.js');

@@ -8,8 +8,6 @@
 
 <p align="center"><em>Designed for Claude by Claude. They say we're soulmates!</em></p>
 
----
-
 ## Install
 
 ```bash
@@ -21,24 +19,14 @@ git clone https://github.com/Emball/claudette.git
 
 **To update:** `git pull` inside the folder, then hit **↻** on the Claudette card in `chrome://extensions`.
 
----
-
 ## Chat Exporter
 
-Export any Claude.ai conversation as Markdown or plain text, instantly, using your existing session — no waiting for the official data export pipeline.
+Export any Claude.ai conversation as Markdown or plain text, instantly using the following methods:
 
-**Single chat** — download button in the top bar of any open conversation.
+- **Single chat**: download button in the top bar of any open conversation.
+- **Bulk** — on the `/chats` page, check conversations and hit **Export** in the selection bar.
 
-**Bulk** — on the `/chats` page, check conversations and hit **Export** in the selection bar.
-
-**Output:**
-- No images → bare `.md` / `.txt`
-- Images present → `.zip` with the file and all images flat at the root (so `![image.png](./image.png)` embeds automatically when you open the MD)
-- Bulk → single `.zip`, all files flat at root, image filenames prefixed with their conversation title to avoid collisions
-
----
-
-## What gets exported
+### Export format
 
 | Content | Format |
 |---|---|
@@ -46,17 +34,13 @@ Export any Claude.ai conversation as Markdown or plain text, instantly, using yo
 | Tool calls & output | `> **Action title**` blockquote + fenced block |
 | Thinking blocks | `> *italic blockquote*` *(toggle: off by default)* |
 | Artifacts | Fenced code block with filename as first-line comment |
-| Uploaded files | `*<File: name.ext>*` + fenced block |
+| Uploaded files | `*<File: filename.ext>*` + fenced block |
 | Pasted text | `*<Pasted>*` + fenced block |
-| Screenshots (OCR on) | `*<Screenshot: name>*` + extracted text in fenced block |
-| Screenshots (OCR off) | `*<Screenshot: name>*` + embedded in ZIP |
-| Photos | `*<Photo: name>*` + `![name](./name)` |
+| Screenshots (OCR on) | `*<Screenshot: filename>*` + extracted text in fenced block |
+| Screenshots (OCR off) | `*<Screenshot: filename>*` + embedded in ZIP |
+| Photos | `*<Photo: filename>*` + `![name](./filename)` |
 
-Fences auto-extend if content contains backticks, so nested code blocks never break the export.
-
----
-
-## Settings
+### Export options
 
 | Setting | Default | |
 |---|---|---|
@@ -68,15 +52,10 @@ Fences auto-extend if content contains backticks, so nested code blocks never br
 | ↳ Package in ZIP | On | Save images to ZIP |
 | ZIP non-image files | On | Bundle uploaded files into ZIP |
 
----
-
 ## Coming soon
 
-**Session Chaining** — a local conversation library. Every chat you open gets absorbed into a local index. Chains are named groups of sessions; spawning a new chain chat injects the full prior context so Claude picks up seamlessly. Powers full-text search across your entire history.
-
-**Prompt Library** — store and inject reusable prompts into the input box.
-
----
+- **Session Chaining** — a local conversation library. Every chat you open gets absorbed into a local index. Chains are named groups of sessions; spawning a new chain chat injects the full prior context so Claude picks up seamlessly. Powers full-text search across your entire history.
+- **Prompt Library** — store and inject reusable prompts into the input box.
 
 ## Technical
 

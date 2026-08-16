@@ -5,7 +5,7 @@
 
 The repo is public. The extension is not on the Chrome Web Store — install is manual.
 
-**Current version: 6.1.6.0**
+**Current version: 6.1.6.1**
 
 **Version sync:** The version in this file and the `"version"` field in `manifest.json` must always be kept in sync. AGENTS.md uses MAJOR.MINOR.PATCH.MICRO; manifest.json uses MAJOR.MINOR.PATCH (drop the MICRO). Update both on every commit.
 
@@ -459,6 +459,22 @@ The library is powered by **Cache Chat Data** — a toggleable setting (default:
 - Total per-conversation footprint (text-heavy, no images): ~20-50KB compressed. With images (OCR text only): ~25-60KB. Across a full Claude account history (est. 1-2GB raw): realistically 50-200MB compressed in the cache
 
 **Staleness detection:** Monitors the last two message IDs per stored conversation. If they change on next open, flags as stale, re-absorbs the conversation, invalidates export cache, re-runs background OCR on any new images.
+
+**Cache-first rule:** Every operation that would hit the Claude.ai API must check the cache first when Cache Chat Data is enabled. If a valid (non-stale) cache entry exists, it is used and the API call is skipped entirely. This applies to every current and future feature without exception:
+
+| Operation | API call bypassed |
+|---|---|
+| Single chat export | `fetchConversation` |
+| Bulk / selected export | `fetchConversation` × N |
+| Chain spawn (transcript assembly) | `fetchConversation` × all prior sessions |
+| Conversation search | `fetchConversation` + `fetchAllConversations` |
+| HTML / PDF export | `fetchConversation` |
+| Prompt library injection context | `fetchConversation` |
+| Any future feature reading message content | `fetchConversation` |
+
+The conversation list (`fetchAllConversations`) is cached separately as a lightweight index (UUIDs + titles + timestamps only, no message content) and refreshed on every page load or manual trigger — it's fast and small, so it stays live. Everything below the list level (actual message content) goes through the cache-first path.
+
+When implementing any new feature that reads conversation data: **check cache first, fall back to API, write result to cache.**
 
 **Background OCR flow:** When a conversation is absorbed and contains images, Claudette queues OCR jobs at low priority (semaphore still capped at 3 concurrent). Results written to OCR cache immediately. If the user exports before OCR completes, it falls back to live OCR for the remaining images. Progress visible in popup as a secondary indicator when cache mode is active.
 

@@ -5,7 +5,7 @@
 
 The repo is public. The extension is not on the Chrome Web Store — install is manual.
 
-**Current version: 6.1.6.1**
+**Current version: 6.1.6.2**
 
 **Version sync:** The version in this file and the `"version"` field in `manifest.json` must always be kept in sync. AGENTS.md uses MAJOR.MINOR.PATCH.MICRO; manifest.json uses MAJOR.MINOR.PATCH (drop the MICRO). Update both on every commit.
 
@@ -513,24 +513,8 @@ settings: {
 }
 ```
 
----
-
-### Module 2b — Clipboard Auto-Paste
-
-When the user takes a screenshot (Snipping Tool, Win+Shift+S, Cmd+Shift+4, etc.) it lands in the system clipboard as an image. If a claude.ai tab gains focus immediately after, Claudette checks the clipboard via `navigator.clipboard.read()`. If it contains an image, it auto-attaches it to the claude.ai message input box — exactly as if the user had hit Ctrl+V — without sending.
-
-**Implementation:**
-- `window.addEventListener('focus', ...)` in the content script triggers the clipboard check on tab focus
-- `navigator.clipboard.read()` returns `ClipboardItem[]` — check for `image/*` MIME type
-- Convert to a `File` object and programmatically attach via DataTransfer injection (same technique as drag-and-drop emulation)
-- Track `lastClipboardCheck` timestamp to avoid re-attaching the same screenshot on repeated focus events
-- Requires `clipboardRead` permission in manifest — Chrome prompts user once on first use
-- Toggleable in settings (default: on)
-
-If Cache Chat Data is enabled, the attached image is immediately queued for background OCR so it is pre-cached before the message is even sent.
-
 **Chain spawn flow:**
-1. Pull all prior session transcripts from library in order
+1. Pull all prior session transcripts from library in order (cache-first, no API calls if cached)
 2. Compose injection payload with Claudette preamble
 3. Open new Claude.ai chat
 4. Paste payload → immediately scrub from visible DOM (user sees seamless fresh chat)
@@ -563,13 +547,29 @@ Per-chain instructions take priority over global; both can coexist.
 
 Claudette monitors the DOM for quota exhaustion signals — the "You've reached your limit" / "Upgrade" message that appears when a free or Pro account runs out of messages. On detection:
 
-1. A non-intrusive toast or subtle highlight appears prompting the user to chain the conversation before switching accounts
-2. A chain icon (link/chain glyph, consistent with Claudette's icon aesthetic) is injected near the message input box — always visible, not just on quota hit, so users can chain proactively too
-3. Clicking the chain icon opens a dropdown list of existing chains. User selects which chain to link this conversation to (or creates a new one)
+1. A non-intrusive toast appears prompting the user to chain before switching accounts
+2. A chain icon (link/chain glyph, consistent with Claudette's icon aesthetic) is injected near the message input box — always visible proactively, not only on quota hit
+3. Clicking the chain icon opens a dropdown of existing chains — user selects one or creates new
 4. Chain spawn fires: new chat opens, payload injected, DOM scrubbed, Claude responds with the seamless continuation message
-5. User can then switch accounts (manually) and the new session is registered in the chain under the new org UUID
+5. User switches accounts manually; the new session registers in the chain under the new org UUID
 
-**Quota signal detection:** Watch for DOM text matching patterns like "message limit", "upgrade to continue", "out of messages", or the appearance of upgrade CTA buttons mid-conversation (not in the sidebar — those are always there). The mid-conversation appearance of an upgrade prompt is the reliable signal.
+**Quota signal detection:** Watch for DOM text matching "message limit", "upgrade to continue", "out of messages", or upgrade CTA buttons appearing mid-conversation. The sidebar always has upgrade buttons — only mid-conversation appearance is the reliable signal. Quota-hit upgrade elements are specifically exempted from Module 5's UI Declutter hiding until after chain spawn completes.
+
+---
+
+### Module 2b — Clipboard Auto-Paste
+
+When the user takes a screenshot (Snipping Tool, Win+Shift+S, Cmd+Shift+4, etc.) it lands in the system clipboard as an image. If a claude.ai tab gains focus immediately after, Claudette checks the clipboard via `navigator.clipboard.read()`. If it contains an image, it auto-attaches it to the claude.ai message input box — exactly as if the user had hit Ctrl+V — without sending.
+
+**Implementation:**
+- `window.addEventListener('focus', ...)` in the content script triggers the clipboard check on tab focus
+- `navigator.clipboard.read()` returns `ClipboardItem[]` — check for `image/*` MIME type
+- Convert to a `File` object and programmatically attach via DataTransfer injection (same technique as drag-and-drop emulation)
+- Track `lastClipboardCheck` timestamp to avoid re-attaching the same screenshot on repeated focus events
+- Requires `clipboardRead` permission in manifest — Chrome prompts user once on first use
+- Toggleable in settings (default: on)
+
+If Cache Chat Data is enabled, the attached image is immediately queued for background OCR so it is pre-cached before the message is even sent.
 
 ### Module 3 — Conversation Search
 

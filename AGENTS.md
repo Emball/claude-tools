@@ -5,7 +5,7 @@
 
 The repo is public. The extension is not on the Chrome Web Store — install is manual.
 
-**Current version: 6.1.5.0**
+**Current version: 6.1.6.0**
 
 **Version sync:** The version in this file and the `"version"` field in `manifest.json` must always be kept in sync. AGENTS.md uses MAJOR.MINOR.PATCH.MICRO; manifest.json uses MAJOR.MINOR.PATCH (drop the MICRO). Update both on every commit.
 
@@ -440,9 +440,27 @@ screenshot (score < 2):
 
 **Core concept: a local library keyed per account.**
 
-Claudette passively absorbs every conversation the user opens — full transcript, images (pre-OCR'd), artifacts, and files — stored in `chrome.storage.local` indexed by `orgUUID + conversationUUID`. Passive absorption is toggleable (default: on).
+The library is powered by **Cache Chat Data** — a toggleable setting (default: off, user must opt in) that instructs Claudette to passively absorb every conversation the user opens. Full transcripts, pre-OCR'd image results, artifacts, and file contents are stored locally indexed by `orgUUID + conversationUUID`. When off, Claudette fetches fresh from the API on demand; when on, everything is instant from local storage.
 
-**Staleness detection:** Monitors last two message IDs per stored conversation. If they change, flags as stale and re-absorbs.
+**What "Cache Chat Data" unlocks:**
+- Conversation search (full-text, instant, no API calls)
+- Fast chaining — transcripts pre-built, no re-fetch on chain spawn
+- Fast export — formatted output ready before you click, no waiting on API or OCR
+- Background OCR — images are OCR'd silently as conversations are absorbed; export is instant because the text is already extracted
+- Pre-cached export output — MD/HTML export strings cached per conversation so export is a pure download trigger
+- Clipboard auto-paste (see Module 2b) — works independently of cache but benefits from it
+
+**Storage backend:** `chrome.storage.local` with `unlimitedStorage` permission declared in manifest. No hard quota. Configurable soft ceiling in settings (default: 500MB, user-adjustable, "unlimited" option available). Storage usage shown in popup with a breakdown by data type (transcripts, OCR cache, export cache). Manual cache clear available per-account or globally.
+
+**Storage strategy:**
+- Transcripts stored as compressed strings (`CompressionStream` API, 60-80% size reduction)
+- OCR cache stores text output only — never raw image blobs. Images stay on Claude's servers and are re-fetched only if cache is cleared. A cached OCR entry is: `{ text: string, confidence: number, tier: 1|2|3, cachedAt: timestamp }`
+- Export cache stores the final formatted MD/HTML string so repeated exports of the same conversation skip all processing
+- Total per-conversation footprint (text-heavy, no images): ~20-50KB compressed. With images (OCR text only): ~25-60KB. Across a full Claude account history (est. 1-2GB raw): realistically 50-200MB compressed in the cache
+
+**Staleness detection:** Monitors the last two message IDs per stored conversation. If they change on next open, flags as stale, re-absorbs the conversation, invalidates export cache, re-runs background OCR on any new images.
+
+**Background OCR flow:** When a conversation is absorbed and contains images, Claudette queues OCR jobs at low priority (semaphore still capped at 3 concurrent). Results written to OCR cache immediately. If the user exports before OCR completes, it falls back to live OCR for the remaining images. Progress visible in popup as a secondary indicator when cache mode is active.
 
 **Data model:**
 ```
@@ -457,11 +475,14 @@ chains: {
 library: {
   [orgUuid]: {
     [convUuid]: {
-      transcript: string,
+      transcriptCompressed: ArrayBuffer,
       name: string,
       updatedAt: timestamp,
       lastTwoMessageIds: [string, string],
-      ocrCache: { [imageId]: string },
+      ocrCache: {
+        [imageId]: { text: string, confidence: number, tier: number, cachedAt: timestamp }
+      },
+      exportCache: { md: string | null, html: string | null, cachedAt: timestamp },
       chainId: string | null,
       sessionIndex: number | null,
       stale: boolean,
@@ -470,10 +491,27 @@ library: {
 }
 
 settings: {
-  passiveLibrary: true,
+  cacheEnabled: false,
+  cacheCeilingMB: 500,
   globalCustomInstructions: string,
 }
 ```
+
+---
+
+### Module 2b — Clipboard Auto-Paste
+
+When the user takes a screenshot (Snipping Tool, Win+Shift+S, Cmd+Shift+4, etc.) it lands in the system clipboard as an image. If a claude.ai tab gains focus immediately after, Claudette checks the clipboard via `navigator.clipboard.read()`. If it contains an image, it auto-attaches it to the claude.ai message input box — exactly as if the user had hit Ctrl+V — without sending.
+
+**Implementation:**
+- `window.addEventListener('focus', ...)` in the content script triggers the clipboard check on tab focus
+- `navigator.clipboard.read()` returns `ClipboardItem[]` — check for `image/*` MIME type
+- Convert to a `File` object and programmatically attach via DataTransfer injection (same technique as drag-and-drop emulation)
+- Track `lastClipboardCheck` timestamp to avoid re-attaching the same screenshot on repeated focus events
+- Requires `clipboardRead` permission in manifest — Chrome prompts user once on first use
+- Toggleable in settings (default: on)
+
+If Cache Chat Data is enabled, the attached image is immediately queued for background OCR so it is pre-cached before the message is even sent.
 
 **Chain spawn flow:**
 1. Pull all prior session transcripts from library in order

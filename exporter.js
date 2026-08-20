@@ -387,3 +387,23 @@ async function exportBulk(results, settingsOverride) {
   reportProgress('done', results.length, results.length, 'Done');
   console.log('[exporter] bulk zip downloaded');
 }
+
+// --- Clipboard export ---
+
+// Expose conversationToText for content.js inline fallback
+window._cceConversationToText = conversationToText;
+
+// copyChatText: same rendering pipeline as exportSingle, but writes to clipboard.
+// Respects all extension settings (format, thinking, tools, images, ocr).
+// Images and files are NOT included in the clipboard text (only their labels/text).
+async function copyChatText(conv, settingsOverride) {
+  const settings = settingsOverride || await loadSettings();
+  console.log(`[exporter] clipboard copy: ${conv.uuid}`);
+  const { text } = await conversationToText(conv, settings);
+  await navigator.clipboard.writeText(text);
+  reportProgress('done', 1, 1, 'Copied to clipboard');
+  console.log('[exporter] copied to clipboard');
+}
+
+// Expose for content.js
+window.copyChatText = copyChatText;

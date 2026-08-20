@@ -1,6 +1,5 @@
 // content.js — injects export buttons into claude.ai
 
-// no-op — no custom icon, buttons use plain text matching Share button style
 function setIconFill() {}
 
 // ── CSS injected once ────────────────────────────────────────────────────────
@@ -11,6 +10,7 @@ function injectStyles() {
   s.id = 'cce-styles';
   s.textContent = `
     [data-cce="chat-export"],
+    [data-cce="chat-copy"],
     [data-cce="sel-export"] {
       background: #2e2e2e !important;
       border-radius: 8px !important;
@@ -19,7 +19,12 @@ function injectStyles() {
       position: relative;
       right: 1.5px;
     }
+    [data-cce="chat-copy"] {
+      position: relative;
+      right: 3px;
+    }
     [data-cce="chat-export"]:hover,
+    [data-cce="chat-copy"]:hover,
     [data-cce="sel-export"]:hover {
       background: #383838 !important;
     }
@@ -69,7 +74,7 @@ function injectStyles() {
 
 let _progressPct = 0;
 let _progressLabel = '';
-let _progressBars = []; // array of {wrap, fill, label} to update
+let _progressBars = [];
 
 function _updateAllBars() {
   for (const b of _progressBars) {
@@ -77,13 +82,11 @@ function _updateAllBars() {
     b.fill.style.width = (_progressPct * 100).toFixed(1) + '%';
     if (b.label) b.label.textContent = _progressLabel;
   }
-  // Mirror to popup via storage
   try {
     chrome.storage.local.set({ cce_progress: { pct: _progressPct, label: _progressLabel } });
   } catch(e) {}
 }
 
-// Installed by content.js, called by exporter.js
 window.cceProgress = function(phase, current, total, label) {
   const pct = total > 0 ? Math.min(current / total, 1) : 0;
   _progressPct = pct;
@@ -104,7 +107,6 @@ window.cceProgress = function(phase, current, total, label) {
     _progressPct = 0;
   }
 
-  // Also update download button icons
   document.querySelectorAll('[data-cce]').forEach(btn => setIconFill(btn, _progressPct));
   _updateAllBars();
 };
@@ -132,7 +134,6 @@ function createProgressBar(anchorEl) {
   const bar = { wrap, fill, label: lbl };
   _progressBars.push(bar);
 
-  // Anchor must be position:relative for absolute child to work
   anchorEl.style.position = 'relative';
   anchorEl.appendChild(wrap);
 
@@ -186,11 +187,42 @@ function getCurrentChatId() {
   return extractConvIdFromUrl(window.location.href);
 }
 
+// ── Cancel button detection — scoped to selection bar only ───────────────────
+// The selection bar lives in the /chats page header/toolbar area.
+// Message edit also has a Cancel button — we must NOT target that one.
+// Strategy: the selection bar Cancel is a sibling of the "Select all" or count
+// label, or is in a fixed/sticky toolbar container that is NOT a child of any
+// message thread element. We reject candidates that live inside known message
+// container selectors.
+
 function findCancelButton() {
-  return Array.from(document.querySelectorAll('button[data-cds="Button"]')).find(btn => {
+  const candidates = Array.from(document.querySelectorAll('button[data-cds="Button"]')).filter(btn => {
     const span = btn.querySelector('span.inline-flex');
     return span && span.textContent.trim() === 'Cancel';
   });
+
+  if (candidates.length === 0) return null;
+  if (candidates.length === 1) return candidates[0];
+
+  // Multiple Cancel buttons — pick the one that's NOT inside a message editor.
+  // Message edit containers typically have role="textbox" or data-* attributes
+  // for the editor, or are inside elements with class patterns like "message",
+  // "human-turn", "prose", etc.
+  const messageEditorSelectors = [
+    '[data-testid*="message"]',
+    '[class*="human-turn"]',
+    '[class*="message-row"]',
+    'article',
+    '[class*="ConversationItem"]',
+  ];
+
+  for (const btn of candidates) {
+    const insideEditor = messageEditorSelectors.some(sel => btn.closest(sel));
+    if (!insideEditor) return btn;
+  }
+
+  // Fallback: return the first one
+  return candidates[0];
 }
 
 function getSelectedConvIds() {
@@ -216,12 +248,10 @@ function getSelectedConvIds() {
 async function runExport(btn, exportFn) {
   if (btn) { btn.style.opacity = '0.5'; btn.style.pointerEvents = 'none'; }
 
-  // Reset icon fill
   setIconFill(btn, 0);
   _progressPct = 0;
   _progressLabel = 'Starting…';
 
-  // Attach progress bar to the button's parent (the action row)
   const anchor = btn?.parentElement || btn;
   const bar = anchor ? createProgressBar(anchor) : null;
 
@@ -234,7 +264,6 @@ async function runExport(btn, exportFn) {
   } finally {
     if (btn) { btn.style.opacity = '1'; btn.style.pointerEvents = ''; }
     setIconFill(btn, 1);
-    // Remove progress bar after 8s (gives time to read final state)
     if (bar) setTimeout(() => removeProgressBar(bar), 8000);
   }
 }
@@ -263,6 +292,26 @@ async function exportCurrentChat() {
   });
 }
 
+async function copyCurrentChat() {
+  const convId = getCurrentChatId();
+  if (!convId) { console.warn('[cce] could not get current chat ID from URL'); return; }
+  const btn = document.querySelector('[data-cce="chat-copy"]');
+  await runExport(btn, async () => {
+    const settings = await loadContentSettings();
+    const orgId    = await getOrgId();
+    const res      = await sendToBackground('fetchConversation', { orgId, convId });
+    // copyChatText lives in exporter.js — falls back to exportSingle text if not defined
+    if (typeof window.copyChatText === 'function') {
+      await window.copyChatText(res.data, settings);
+    } else {
+      // Inline fallback: use conversationToText and write to clipboard
+      await ensureLibs();
+      const { text } = await window._cceConversationToText(res.data, settings);
+      await navigator.clipboard.writeText(text);
+    }
+  });
+}
+
 // ── Button injection ──────────────────────────────────────────────────────────
 
 function injectSelectionBarButton() {
@@ -285,7 +334,10 @@ function injectSelectionBarButton() {
 }
 
 function injectChatTopBarButton() {
-  if (document.querySelector('[data-cce="chat-export"]')) return;
+  // Already have both buttons — nothing to do
+  const hasExport = !!document.querySelector('[data-cce="chat-export"]');
+  const hasCopy   = !!document.querySelector('[data-cce="chat-copy"]');
+  if (hasExport && hasCopy) return;
   if (!getCurrentChatId()) return;
 
   const shareBtn = Array.from(document.querySelectorAll('button')).find(btn =>
@@ -293,15 +345,31 @@ function injectChatTopBarButton() {
   );
   if (!shareBtn) return;
 
-  const btn = document.createElement('button');
-  btn.setAttribute('data-cce', 'chat-export');
-  btn.setAttribute('title', 'Export this chat');
-  btn.setAttribute('aria-pressed', 'false');
-  btn.className = shareBtn.className;
-  btn.innerHTML = `<span aria-hidden="true" class="absolute -z-[1] rounded-[inherit] inset-0 cds-btn-squish"></span><span class="inline-flex min-w-0 items-center gap-1 ">Export</span>`;
-  btn.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); exportCurrentChat(); });
-  shareBtn.parentElement.insertBefore(btn, shareBtn);
-  console.log('[cce] chat top bar export button injected');
+  // Build Copy button (inserted first, appears leftmost)
+  if (!hasCopy) {
+    const copyBtn = document.createElement('button');
+    copyBtn.setAttribute('data-cce', 'chat-copy');
+    copyBtn.setAttribute('title', 'Copy this chat to clipboard');
+    copyBtn.setAttribute('aria-pressed', 'false');
+    copyBtn.className = shareBtn.className;
+    copyBtn.innerHTML = `<span aria-hidden="true" class="absolute -z-[1] rounded-[inherit] inset-0 cds-btn-squish"></span><span class="inline-flex min-w-0 items-center gap-1 ">Copy</span>`;
+    copyBtn.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); copyCurrentChat(); });
+    shareBtn.parentElement.insertBefore(copyBtn, shareBtn);
+    console.log('[cce] chat top bar copy button injected');
+  }
+
+  // Build Export button (inserted after Copy, before Share)
+  if (!hasExport) {
+    const exportBtn = document.createElement('button');
+    exportBtn.setAttribute('data-cce', 'chat-export');
+    exportBtn.setAttribute('title', 'Export this chat');
+    exportBtn.setAttribute('aria-pressed', 'false');
+    exportBtn.className = shareBtn.className;
+    exportBtn.innerHTML = `<span aria-hidden="true" class="absolute -z-[1] rounded-[inherit] inset-0 cds-btn-squish"></span><span class="inline-flex min-w-0 items-center gap-1 ">Export</span>`;
+    exportBtn.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); exportCurrentChat(); });
+    shareBtn.parentElement.insertBefore(exportBtn, shareBtn);
+    console.log('[cce] chat top bar export button injected');
+  }
 }
 
 // ── Script loader ─────────────────────────────────────────────────────────────
@@ -333,31 +401,90 @@ async function ensureLibs() {
   return libsReady;
 }
 
-// ── MutationObserver ──────────────────────────────────────────────────────────
+// ── Injection orchestration ───────────────────────────────────────────────────
+// Two separate concerns:
+//   1. Chat top bar buttons (Export + Copy) — injected on /chat/* pages
+//   2. Selection bar button — injected on /chats page when Cancel button exists
+//
+// Problems solved:
+//   - React re-renders nuke our buttons; we must re-inject after every mutation
+//     that could affect the top bar.
+//   - We can't just check "is the button missing?" because React may remove and
+//     re-add the parent in the same microtask, making the button appear present
+//     during the mutation callback even though it's about to be detached.
+//   - Solution: track the Share button's DOM node identity. If it changes, our
+//     buttons are gone and we need to re-inject. If it's the same node, our
+//     buttons are still valid.
+//   - For first-load latency: start a fast polling loop (50ms) that retries
+//     until the Share button is found, rather than waiting for mutations.
 
-let injectTimer = null;
-let lastUrl = location.href;
+let _lastShareBtn = null;
+let _lastCancelBtn = null;
+let _injectTimer = null;
+let _lastUrl = location.href;
+let _pollTimer = null;
+
+function tryInject() {
+  const urlChanged = location.href !== _lastUrl;
+  if (urlChanged) {
+    _lastUrl = location.href;
+    _lastShareBtn = null;
+    _lastCancelBtn = null;
+    // Remove stale buttons that belonged to the previous page
+    document.querySelectorAll('[data-cce]').forEach(el => el.remove());
+  }
+
+  // Chat top bar: detect Share button identity change
+  const shareBtn = Array.from(document.querySelectorAll('button')).find(btn =>
+    btn.textContent.trim() === 'Share' || btn.textContent.trim().includes('Share')
+  );
+
+  if (shareBtn && (shareBtn !== _lastShareBtn || !document.querySelector('[data-cce="chat-export"]'))) {
+    _lastShareBtn = shareBtn;
+    // Remove any stale cce buttons that may be orphaned
+    document.querySelectorAll('[data-cce="chat-export"], [data-cce="chat-copy"]').forEach(el => el.remove());
+    injectChatTopBarButton();
+  }
+
+  // Selection bar: detect Cancel button identity change
+  const cancelBtn = findCancelButton();
+  if (cancelBtn && (cancelBtn !== _lastCancelBtn || !document.querySelector('[data-cce="sel-export"]'))) {
+    _lastCancelBtn = cancelBtn;
+    document.querySelectorAll('[data-cce="sel-export"]').forEach(el => el.remove());
+    injectSelectionBarButton();
+  }
+  if (!cancelBtn) {
+    _lastCancelBtn = null;
+  }
+}
+
+function schedulePoll() {
+  // Fast poll: 50ms intervals until we've injected successfully, then slow down
+  clearTimeout(_pollTimer);
+  _pollTimer = setTimeout(() => {
+    tryInject();
+    const hasChatBtn   = !!document.querySelector('[data-cce="chat-export"]');
+    const needsChatBtn = !!getCurrentChatId();
+    // Keep polling fast if we still need to inject something
+    const stillWaiting = needsChatBtn && !hasChatBtn;
+    _pollTimer = setTimeout(schedulePoll, stillWaiting ? 50 : 2000);
+  }, 50);
+}
 
 function scheduleInject() {
-  const urlChanged = location.href !== lastUrl;
-  const missingSelectionBtn = !document.querySelector('[data-cce="sel-export"]');
-  const missingChatBtn = !document.querySelector('[data-cce="chat-export"]');
-  if (!urlChanged && !missingSelectionBtn && !missingChatBtn) return;
-  lastUrl = location.href;
-  clearTimeout(injectTimer);
-  injectTimer = setTimeout(() => {
-    injectSelectionBarButton();
-    injectChatTopBarButton();
-  }, 400);
+  clearTimeout(_injectTimer);
+  _injectTimer = setTimeout(tryInject, 150);
 }
 
 async function init() {
   injectStyles();
-  scheduleInject();
+  // Immediate attempt
+  tryInject();
+  // Fast polling loop for first-load
+  schedulePoll();
+  // MutationObserver for React re-renders
   const observer = new MutationObserver(scheduleInject);
   observer.observe(document.body, { childList: true, subtree: true });
-  const root = document.getElementById('__next') || document.querySelector('[data-reactroot]') || document.body;
-  // subtree:true on body covers everything — no need for a second observer
   console.log('[cce] initialized');
 }
 

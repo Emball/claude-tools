@@ -5,7 +5,7 @@
 
 The repo is public. The extension is not on the Chrome Web Store — install is manual.
 
-**Current version: 6.1.6.2**
+**Current version: 6.2.0.0**
 
 **Version sync:** The version in this file and the `"version"` field in `manifest.json` must always be kept in sync. AGENTS.md uses MAJOR.MINOR.PATCH.MICRO; manifest.json uses MAJOR.MINOR.PATCH (drop the MICRO). Update both on every commit.
 
@@ -418,11 +418,15 @@ screenshot (score < 2):
 
 ## UI Injection Points
 
-**Active chat top bar** — icon-only download button before the Share button. Visible on `/chat/*`. Exports current conversation.
+**Active chat top bar** — Export button and Copy button before the Share button. Visible on `/chat/*`. Export downloads; Copy writes formatted text to clipboard (same rendering pipeline, same settings, no image blobs). Both injected by `injectChatTopBarButton()`.
 
 **Chats page selection bar** (`/chats`) — Export button next to Cancel, visible when conversations are checked. UUIDs extracted by walking from checked `<input[type="checkbox"]>` up to nearest `<a href="/chat/{uuid}">`. Single selection routes through `exportSingle` (no subfolder ZIP).
 
-`MutationObserver` on `document.body` and the React root handles SPA re-injection. Debounced 400ms.
+**Button persistence strategy:** `tryInject()` tracks the identity (DOM node reference) of the Share button and Cancel button. If the node changes (React re-render nuked the toolbar), all Claudette buttons are removed and re-injected. A fast 50ms polling loop runs until buttons are present, then slows to 2s intervals. `MutationObserver` triggers `tryInject()` debounced at 150ms on every DOM mutation. This eliminates the first-load latency and button disappearance on re-renders.
+
+**Cancel button disambiguation:** `findCancelButton()` filters out Cancel buttons that live inside known message editor containers (`article`, `[class*="human-turn"]`, `[data-testid*="message"]`, etc.) to avoid false-matching the edit-message Cancel button.
+
+**Clipboard export:** `copyChatText(conv, settings)` in `exporter.js` runs the same `conversationToText()` pipeline and writes the result to `navigator.clipboard`. Requires `clipboardWrite` permission in manifest. Image blobs are not included (labels and OCR text are). `window.copyChatText` is exposed for content.js to call after `ensureLibs()`.
 
 ---
 

@@ -1,13 +1,14 @@
 {
   "manifest_version": 3,
   "name": "Claudette",
-  "version": "6.1.4",
+  "version": "6.2.0",
   "description": "Export Claude.ai chats as Markdown or plain text with images.",
   "permissions": [
     "storage",
     "downloads",
     "webRequest",
-    "scripting"
+    "scripting",
+    "clipboardWrite"
   ],
   "host_permissions": [
     "https://claude.ai/*"

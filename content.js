@@ -317,10 +317,8 @@ function injectSelectionBarButton() {
 }
 
 function injectChatTopBarButton() {
-  // Already have both buttons — nothing to do
-  const hasExport = !!document.querySelector('[data-cce="chat-export"]');
-  const hasCopy   = !!document.querySelector('[data-cce="chat-copy"]');
-  if (hasExport && hasCopy) return;
+  if (!!document.querySelector('[data-cce="chat-export"]') &&
+      !!document.querySelector('[data-cce="chat-copy"]')) return;
   if (!getCurrentChatId()) return;
 
   const shareBtn = Array.from(document.querySelectorAll('button')).find(btn =>
@@ -328,31 +326,32 @@ function injectChatTopBarButton() {
   );
   if (!shareBtn) return;
 
-  // Build Copy button (inserted first, appears leftmost)
-  if (!hasCopy) {
-    const copyBtn = document.createElement('button');
-    copyBtn.setAttribute('data-cce', 'chat-copy');
-    copyBtn.setAttribute('title', 'Copy this chat to clipboard');
-    copyBtn.setAttribute('aria-pressed', 'false');
-    copyBtn.className = shareBtn.className;
-    copyBtn.innerHTML = `<span aria-hidden="true" class="absolute -z-[1] rounded-[inherit] inset-0 cds-btn-squish"></span><span class="inline-flex min-w-0 items-center gap-1 ">Copy</span>`;
-    copyBtn.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); copyCurrentChat(); });
-    shareBtn.parentElement.insertBefore(copyBtn, shareBtn);
-    console.log('[cce] chat top bar copy button injected');
-  }
+  // Wrap both buttons in a single container so nothing can slip between them and Share.
+  // The container is inserted as one unit immediately before Share.
+  const wrap = document.createElement('div');
+  wrap.setAttribute('data-cce', 'btn-wrap');
+  wrap.style.cssText = 'display:inline-flex;gap:0;';
 
-  // Build Export button (inserted after Copy, before Share)
-  if (!hasExport) {
-    const exportBtn = document.createElement('button');
-    exportBtn.setAttribute('data-cce', 'chat-export');
-    exportBtn.setAttribute('title', 'Export this chat');
-    exportBtn.setAttribute('aria-pressed', 'false');
-    exportBtn.className = shareBtn.className;
-    exportBtn.innerHTML = `<span aria-hidden="true" class="absolute -z-[1] rounded-[inherit] inset-0 cds-btn-squish"></span><span class="inline-flex min-w-0 items-center gap-1 ">Export</span>`;
-    exportBtn.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); exportCurrentChat(); });
-    shareBtn.parentElement.insertBefore(exportBtn, shareBtn);
-    console.log('[cce] chat top bar export button injected');
-  }
+  const copyBtn = document.createElement('button');
+  copyBtn.setAttribute('data-cce', 'chat-copy');
+  copyBtn.setAttribute('title', 'Copy this chat to clipboard');
+  copyBtn.setAttribute('aria-pressed', 'false');
+  copyBtn.className = shareBtn.className;
+  copyBtn.innerHTML = `<span aria-hidden="true" class="absolute -z-[1] rounded-[inherit] inset-0 cds-btn-squish"></span><span class="inline-flex min-w-0 items-center gap-1 ">Copy</span>`;
+  copyBtn.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); copyCurrentChat(); });
+
+  const exportBtn = document.createElement('button');
+  exportBtn.setAttribute('data-cce', 'chat-export');
+  exportBtn.setAttribute('title', 'Export this chat');
+  exportBtn.setAttribute('aria-pressed', 'false');
+  exportBtn.className = shareBtn.className;
+  exportBtn.innerHTML = `<span aria-hidden="true" class="absolute -z-[1] rounded-[inherit] inset-0 cds-btn-squish"></span><span class="inline-flex min-w-0 items-center gap-1 ">Export</span>`;
+  exportBtn.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); exportCurrentChat(); });
+
+  wrap.appendChild(copyBtn);
+  wrap.appendChild(exportBtn);
+  shareBtn.parentElement.insertBefore(wrap, shareBtn);
+  console.log('[cce] chat top bar buttons injected');
 }
 
 // ── Script loader ─────────────────────────────────────────────────────────────
@@ -420,7 +419,7 @@ function tryInject() {
   );
   if (shareBtn && (shareBtn !== _lastShareBtn || !document.querySelector('[data-cce="chat-export"]'))) {
     _lastShareBtn = shareBtn;
-    document.querySelectorAll('[data-cce="chat-export"], [data-cce="chat-copy"]').forEach(el => el.remove());
+    document.querySelectorAll('[data-cce="btn-wrap"], [data-cce="chat-export"], [data-cce="chat-copy"]').forEach(el => el.remove());
     injectChatTopBarButton();
   }
 

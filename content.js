@@ -187,42 +187,20 @@ function getCurrentChatId() {
   return extractConvIdFromUrl(window.location.href);
 }
 
-// ── Cancel button detection — scoped to selection bar only ───────────────────
-// The selection bar lives in the /chats page header/toolbar area.
-// Message edit also has a Cancel button — we must NOT target that one.
-// Strategy: the selection bar Cancel is a sibling of the "Select all" or count
-// label, or is in a fixed/sticky toolbar container that is NOT a child of any
-// message thread element. We reject candidates that live inside known message
-// container selectors.
+// ── Cancel button detection — scoped to /chats selection bar only ────────────
+// The selection bar Cancel only appears when conversations are checked.
+// The message-edit Cancel appears when editing a human message in a chat.
+// Definitive discriminator: if no checkboxes are checked, whatever Cancel
+// button exists on screen is NOT the selection bar — don't touch it.
 
 function findCancelButton() {
-  const candidates = Array.from(document.querySelectorAll('button[data-cds="Button"]')).filter(btn => {
+  const hasChecked = document.querySelector('input[type="checkbox"]:checked');
+  if (!hasChecked) return null;
+
+  return Array.from(document.querySelectorAll('button[data-cds="Button"]')).find(btn => {
     const span = btn.querySelector('span.inline-flex');
     return span && span.textContent.trim() === 'Cancel';
-  });
-
-  if (candidates.length === 0) return null;
-  if (candidates.length === 1) return candidates[0];
-
-  // Multiple Cancel buttons — pick the one that's NOT inside a message editor.
-  // Message edit containers typically have role="textbox" or data-* attributes
-  // for the editor, or are inside elements with class patterns like "message",
-  // "human-turn", "prose", etc.
-  const messageEditorSelectors = [
-    '[data-testid*="message"]',
-    '[class*="human-turn"]',
-    '[class*="message-row"]',
-    'article',
-    '[class*="ConversationItem"]',
-  ];
-
-  for (const btn of candidates) {
-    const insideEditor = messageEditorSelectors.some(sel => btn.closest(sel));
-    if (!insideEditor) return btn;
-  }
-
-  // Fallback: return the first one
-  return candidates[0];
+  }) || null;
 }
 
 function getSelectedConvIds() {

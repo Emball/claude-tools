@@ -9,11 +9,16 @@ function injectStyles() {
   const s = document.createElement('style');
   s.id = 'cce-styles';
   s.textContent = `
+    @keyframes cce-fadein {
+      from { opacity: 0; transform: translateY(-2px); }
+      to   { opacity: 1; transform: translateY(0);    }
+    }
     [data-cce="chat-export"],
     [data-cce="chat-copy"],
     [data-cce="sel-export"] {
       background: #2e2e2e !important;
       border-radius: 8px !important;
+      animation: cce-fadein 0.18s ease both;
     }
     [data-cce="chat-export"] {
       position: relative;

@@ -23,7 +23,7 @@ git clone https://github.com/Emball/claudette.git
 
 Export any Claude.ai conversation as Markdown or plain text, instantly using the following methods:
 
-- **Single chat**: download button in the top bar of any open conversation.
+- **Single chat**: **Export** and **Copy** buttons in the top bar of any open conversation. Export downloads the file; Copy writes the same formatted text straight to your clipboard.
 - **Bulk** — on the `/chats` page, check conversations and hit **Export** in the selection bar.
 
 ### Export format

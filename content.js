@@ -385,88 +385,81 @@ async function ensureLibs() {
 }
 
 // ── Injection orchestration ───────────────────────────────────────────────────
-// Two separate concerns:
-//   1. Chat top bar buttons (Export + Copy) — injected on /chat/* pages
-//   2. Selection bar button — injected on /chats page when Cancel button exists
+// Single poll loop drives everything. Two modes:
+//   FAST (50ms) — active while we need to inject but haven't yet
+//   IDLE (2000ms) — once buttons are in place, just a heartbeat check
 //
-// Problems solved:
-//   - React re-renders nuke our buttons; we must re-inject after every mutation
-//     that could affect the top bar.
-//   - We can't just check "is the button missing?" because React may remove and
-//     re-add the parent in the same microtask, making the button appear present
-//     during the mutation callback even though it's about to be detached.
-//   - Solution: track the Share button's DOM node identity. If it changes, our
-//     buttons are gone and we need to re-inject. If it's the same node, our
-//     buttons are still valid.
-//   - For first-load latency: start a fast polling loop (50ms) that retries
-//     until the Share button is found, rather than waiting for mutations.
+// MutationObserver kicks the loop back to FAST whenever the DOM changes,
+// so React re-renders that nuke our buttons get caught immediately.
+// URL changes clear stale state and force a FAST cycle.
 
-let _lastShareBtn = null;
+let _lastShareBtn  = null;
 let _lastCancelBtn = null;
-let _injectTimer = null;
-let _lastUrl = location.href;
-let _pollTimer = null;
+let _lastUrl       = location.href;
+let _pollTimer     = null;
+let _fastMode      = true;  // start fast until first successful inject
+
+function needsInjection() {
+  if (getCurrentChatId() && !document.querySelector('[data-cce="chat-export"]')) return true;
+  if (findCancelButton()  && !document.querySelector('[data-cce="sel-export"]'))  return true;
+  return false;
+}
 
 function tryInject() {
   const urlChanged = location.href !== _lastUrl;
   if (urlChanged) {
     _lastUrl = location.href;
-    _lastShareBtn = null;
+    _lastShareBtn  = null;
     _lastCancelBtn = null;
-    // Remove stale buttons that belonged to the previous page
     document.querySelectorAll('[data-cce]').forEach(el => el.remove());
   }
 
-  // Chat top bar: detect Share button identity change
+  // Chat top bar
   const shareBtn = Array.from(document.querySelectorAll('button')).find(btn =>
     btn.textContent.trim() === 'Share' || btn.textContent.trim().includes('Share')
   );
-
   if (shareBtn && (shareBtn !== _lastShareBtn || !document.querySelector('[data-cce="chat-export"]'))) {
     _lastShareBtn = shareBtn;
-    // Remove any stale cce buttons that may be orphaned
     document.querySelectorAll('[data-cce="chat-export"], [data-cce="chat-copy"]').forEach(el => el.remove());
     injectChatTopBarButton();
   }
 
-  // Selection bar: detect Cancel button identity change
+  // Selection bar
   const cancelBtn = findCancelButton();
   if (cancelBtn && (cancelBtn !== _lastCancelBtn || !document.querySelector('[data-cce="sel-export"]'))) {
     _lastCancelBtn = cancelBtn;
     document.querySelectorAll('[data-cce="sel-export"]').forEach(el => el.remove());
     injectSelectionBarButton();
   }
-  if (!cancelBtn) {
-    _lastCancelBtn = null;
-  }
+  if (!cancelBtn) _lastCancelBtn = null;
 }
 
-function schedulePoll() {
-  // Fast poll: 50ms intervals until we've injected successfully, then slow down
+function poll() {
   clearTimeout(_pollTimer);
-  _pollTimer = setTimeout(() => {
-    tryInject();
-    const hasChatBtn   = !!document.querySelector('[data-cce="chat-export"]');
-    const needsChatBtn = !!getCurrentChatId();
-    // Keep polling fast if we still need to inject something
-    const stillWaiting = needsChatBtn && !hasChatBtn;
-    _pollTimer = setTimeout(schedulePoll, stillWaiting ? 50 : 2000);
-  }, 50);
+  tryInject();
+  _fastMode = needsInjection();
+  _pollTimer = setTimeout(poll, _fastMode ? 50 : 2000);
 }
 
-function scheduleInject() {
-  clearTimeout(_injectTimer);
-  _injectTimer = setTimeout(tryInject, 150);
+// MutationObserver: kick back to fast mode on any DOM change,
+// but debounce so we don't call tryInject on every single node insertion.
+let _mutationTimer = null;
+function onMutation() {
+  if (!_fastMode) {
+    // Re-enter fast mode immediately so the next poll fires in 50ms
+    _fastMode = true;
+    clearTimeout(_pollTimer);
+    _pollTimer = setTimeout(poll, 50);
+  }
+  // Debounced direct inject attempt — catches changes the poll might lag on
+  clearTimeout(_mutationTimer);
+  _mutationTimer = setTimeout(tryInject, 100);
 }
 
 async function init() {
   injectStyles();
-  // Immediate attempt
-  tryInject();
-  // Fast polling loop for first-load
-  schedulePoll();
-  // MutationObserver for React re-renders
-  const observer = new MutationObserver(scheduleInject);
+  poll();
+  const observer = new MutationObserver(onMutation);
   observer.observe(document.body, { childList: true, subtree: true });
   console.log('[cce] initialized');
 }
